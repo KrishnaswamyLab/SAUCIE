@@ -1,0 +1,12 @@
+*.data-*
+*.DS_STORE
+*.gz
+*.index
+*.jpg
+*.meta
+*.pyc
+*.pkl
+*.png
+*.txt
+checkpoint
+
