@@ -1,11 +1,9 @@
-import sys, os, time, math, argparse, cPickle
+import sys, os, time, math, argparse, pickle
 import numpy as np
 import tensorflow as tf
 import matplotlib.pyplot as plt
 from model import MLP, tbn, obn
-from loader import Loader
 from sklearn.decomposition import PCA
-from skimage.io import imsave
 from sklearn.cluster import KMeans
 from sklearn.metrics import adjusted_rand_score
 from utils import *
@@ -15,31 +13,36 @@ def parse_args():
 
 
 	# NAME
-	parser.add_argument('--save_folder', type=str, default='saved')
+	parser.add_argument('--save_folder', type=str, default='saved_cytof')
+	parser.add_argument('--data', type=str, default='cytof_emt')
+	parser.add_argument('--data_folder', type=str, default='/home/krishnan/data/emt_cytof_data')
 
 	# TRAINING PARAMETERS
 	parser.add_argument('--batch_size', type=int, default=100)
 	parser.add_argument('--learning_rate', type=float, default=.001)
-	parser.add_argument('--num_epochs', type=int, default=50)
+	parser.add_argument('--num_epochs', type=int, default=1000)
 	parser.add_argument('--save_every', type=int, default=1000)
 	parser.add_argument('--print_every', type=int, default=100)
+	parser.add_argument('--max_iterations', type=int, default=10000)
 	
 	# MODEL ARCHITECTURE
-	parser.add_argument('--input_dim', type=int, default=28*28)
 	# parser.add_argument('--layers', type=str, default='1024,512,256,2')
-	parser.add_argument('--layers', type=str, default='128,54,32,2') # make it faster while testing
+	# parser.add_argument('--layers', type=str, default='128,64,32,2') # make it faster while testing
+	parser.add_argument('--layers', type=str, default='64,32,16,2') # make it faster while testing
 	parser.add_argument('--activation', type=str, default='relu')
-	parser.add_argument('--loss', type=str, default='bce')
+	parser.add_argument('--loss', type=str, default='mse')
 	parser.add_argument('--dropout_p', type=float, default=1.)
 	parser.add_argument('--batch_norm', type=bool, default=True)
 	
 	# REGULARIZATIONS
-	parser.add_argument('--lambda_l2', type=float, default=0.)
-	parser.add_argument('--layers_sparsity', type=str, default='0')
-	parser.add_argument('--lambda_sparsity', type=float, default=.00001)
+	parser.add_argument('--lambda_l1', type=float, default=0)
+	parser.add_argument('--lambda_l2', type=float, default=0)
+	parser.add_argument('--layers_sparsity', type=str, default='')
+	parser.add_argument('--lambda_sparsity', type=float, default=0)
 	parser.add_argument('--layers_entropy', type=str, default='0')
-	parser.add_argument('--lambda_entropy', type=float, default=.00001)
+	parser.add_argument('--lambda_entropy', type=float, default=.001)
 	parser.add_argument('--normalization_method', type=str, default='none')
+	parser.add_argument('--thresh', type=float, default=.1)
 
 	# NOISE
 	parser.add_argument('--add_noise', type=bool, default=False)
@@ -64,8 +67,11 @@ def process_args(args):
 	elif args.activation=='tanh': args.activation = tf.nn.tanh
 	elif args.activation=='sigmoid': args.activation = tf.nn.sigmoid
 	elif args.activation=='lrelu': args.activation = lrelu
-	else: print "Could not parse activation: {}".format(args.activation)
+	else: print("Could not parse activation: {}".format(args.activation))
 
+	if args.data == 'MNIST': args.input_dim = 28*28
+	elif args.data == 'cytof_emt': args.input_dim = 40
+	else: print("Could not parse data type for input_dim")
 
 	# make save folder
 	if not os.path.exists(args.save_folder):
@@ -73,7 +79,7 @@ def process_args(args):
 
 	# pickle args
 	with open(args.save_folder + '/args.pkl', 'wb') as f:
-		cPickle.dump(args, f)
+		pickle.dump(args, f)
 
 	# print args in plaintext
 	with open(os.path.join(args.save_folder, 'args.txt'), 'w+') as f:
@@ -92,12 +98,12 @@ def run_inits(args, sess, mlp):
 def save(args, sess, mlp, saver, loader, iteration):
 	savefile = os.path.join(args.save_folder, 'AE')
 	saver.save(sess, savefile , global_step=iteration, write_meta_graph=True)
-	print "Model saved to {}".format(savefile)
+	print("Model saved to {}".format(savefile))
 
 def calc_randind(args, sess, mlp, loader):
 	# get randints
 	randints = []
-	names =['layer_encoder_{}_activation:0'.format(i) for i in xrange(3)] + ['layer_embedding_activation:0']
+	names =['layer_encoder_{}_activation:0'.format(i) for i in range(3)] + ['layer_embedding_activation:0']
 	for name in names:
 		act_tensor = tbn(name)
 		labels = []
@@ -118,40 +124,12 @@ def calc_randind(args, sess, mlp, loader):
 		randint = float(adjusted_rand_score(labels, clusts))
 		randints.append(randint)
 
-	print "Randinds: {}".format(str(['{:.3f}'.format(r) for r in randints]))
-
-def show_image(ims):
-	ims = ims.reshape((-1,28,28))
-	plt.imshow(ims[0,:,:], cmap='gray')
-	plt.show()
-
-def show_result(batch_res, fname, grid_size=(8, 8), grid_pad=5):
-    img_height = 28
-    img_width = 28
-    img_size = img_height * img_width
-    #batch_res = 0.5 * batch_res.reshape((batch_res.shape[0], img_height, img_width)) + 0.5
-    batch_res = batch_res.reshape((batch_res.shape[0], img_height, img_width))
-    img_h, img_w = batch_res.shape[1], batch_res.shape[2]
-    grid_h = img_h * grid_size[0] + grid_pad * (grid_size[0] - 1)
-    grid_w = img_w * grid_size[1] + grid_pad * (grid_size[1] - 1)
-    img_grid = np.zeros((grid_h, grid_w), dtype=np.uint8)
-    for i, res in enumerate(batch_res):
-        if i >= grid_size[0] * grid_size[1]:
-            break
-        img = (res) * 255
-        img = img.astype(np.uint8)
-        row = (i // grid_size[0]) * (img_h + grid_pad)
-        col = (i % grid_size[1]) * (img_w + grid_pad)
-        img_grid[row:row + img_h, col:col + img_w] = img
-    imsave(fname, img_grid)
+	print("Randinds: {}".format(str(['{:.3f}'.format(r) for r in randints])))
 
 def train(args):
 
-	
+	loader = get_loader(args)
 
-	
-
-	loader = Loader(args)
 	mlp = MLP(args)
 
 
@@ -162,7 +140,7 @@ def train(args):
 
 		iteration = 1
 		losses = [tbn('loss:0'), tbn('loss_recon:0'), tbn('loss_reg:0'), tbn('loss_sparse:0'), tbn('loss_entropy:0')]
-		for epoch in xrange(args.num_epochs):
+		for epoch in range(args.num_epochs):
 			t = time.time()
 			for batch, batch_labels in loader.iter_batches('train'):
 				iteration+=1
@@ -184,29 +162,32 @@ def train(args):
 
 				# print score on test set				
 				if iteration%args.print_every==0:
-					print "epoch/iter: {}/{} loss: {:.3f} ({:.3f} {:.3f} {:.3f} {:.3f}) time: {:.1f}".format(epoch,
-						iteration, l, lrec, lreg, lspa, le, time.time() - t)
+					print("epoch/iter: {}/{} loss: {:.3f} ({:.3f} {:.3f} {:.3f} {:.3f}) time: {:.1f}".format(epoch,
+						iteration, l, lrec, lreg, lspa, le, time.time() - t))
 					t = time.time()
 
 				# save
 				if args.save_every and iteration%args.save_every==0:
 					save(args, sess, mlp, saver, loader, iteration)
 
-					embeddings, labels = get_layer(sess, loader, 'layer_embedding_activation:0', 'test')
+					embeddings, labels = get_layer(sess, loader, 'layer_embedding_activation:0')
 
 					plot(args, embeddings, labels, 'Embedding layer', 'embedding')
 
-					calc_randind(args, sess, mlp, loader)
+					count = count_clusters(args, sess, loader, 0, thresh=args.thresh)
+					print("entropy/sparsity lambda: {}/{} Number of clusters: {}".format(args.lambda_entropy, args.lambda_sparsity, count))
 
 					activations_heatmap(args, sess, loader, 0)
 
-					# [reconstructed] = sess.run([mlp.reconstructed], feed_dict=feed)
-					# if not args.preprocess_pca:
-					# 	show_result(reconstructed, 'reconstructed.jpg')
+			# after each epoch potentiall break out
+			if args.max_iterations and iteration > args.max_iterations: break
 
 		# save final model
 		if args.save_every:
 			save(args, sess, mlp, saver, loader, iteration)
+
+		count = count_clusters(args, sess, loader, 0, thresh=args.thresh)
+		print("Final number of clusters (e/s: {}/{}): {}".format(args.lambda_entropy, args.lambda_sparsity, count))
 			
 
 

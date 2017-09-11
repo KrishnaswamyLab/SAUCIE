@@ -2,11 +2,14 @@
 *.DS_STORE
 *.gz
 *.index
+*.json
 *.jpg
 *.meta
+*.out
 *.pyc
 *.pkl
 *.png
+*.sh
 *.txt
 checkpoint
 

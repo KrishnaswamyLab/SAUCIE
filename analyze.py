@@ -1,4 +1,4 @@
-import sys, os, time, math, argparse, cPickle
+import sys, os, time, math, argparse, pickle
 import numpy as np
 import tensorflow as tf
 import matplotlib.pyplot as plt
@@ -9,10 +9,30 @@ from sklearn.metrics import adjusted_rand_score
 from sklearn.manifold import TSNE
 from utils import *
 
-folder = sys.argv[1]
+
+def restore_model(model_folder):
+	tf.reset_default_graph()
+
+	with open('{}/args.pkl'.format(model_folder), 'rb') as f:
+		args = pickle.load(f)
+	args.dropout_p = 1.
+	args = add_to_args(args)
+	loader = get_loader(args)
+
+	sess = tf.Session()
+	ckpt = tf.train.get_checkpoint_state(args.save_folder)
+	saver = tf.train.import_meta_graph('{}.meta'.format(ckpt.model_checkpoint_path))
+	saver.restore(sess, ckpt.model_checkpoint_path)
+
+	# # initialize
+	# with tf.Session() as sess:
+		# ckpt = tf.train.get_checkpoint_state(args.save_folder)
+		# saver = tf.train.import_meta_graph('{}.meta'.format(ckpt.model_checkpoint_path))
+		# saver.restore(sess, ckpt.model_checkpoint_path)
+
+	return args, sess, loader
 
 def add_to_args(args):
-	args.binarize_entropy_layer = True
 	
 	return args
 
@@ -35,7 +55,7 @@ def plot_tsne(args, data, labels, layer_name, n=0):
 	t = time.time()
 	tsne = TSNE(n_components=2, verbose=2, init='pca')
 	fitted = tsne.fit_transform(data)
-	print "tsne took {:.1f} s".format(time.time() - t)
+	print("tsne took {:.1f} s".format(time.time() - t))
 	plot(args, fitted, labels, "tsne on layer {}".format(layer_name), 'layer_{}_tsne'.format(layer_name))
 
 def noised_image_reconstruction(args, sess, loader):
@@ -59,17 +79,8 @@ def noised_image_reconstruction(args, sess, loader):
 
 def binarize(args, sess, loader, layer):
 	data, labels = get_layer(sess, loader, 'normalized_activations_layer_{}:0'.format(layer))
-	# print data.shape
-	# print labels.shape
 
 	binarized = np.where(data>.5, 1, 0)
-
-	# print data.max(axis=1)
-	# print data[:5,:10]
-	# print binarized[:5,:10]
-	
-	# unique_rows = np.vstack({tuple(row) for row in binarized})
-	# print unique_rows.shape
 
 	# km = KMeans(10)
 	# km.fit(binarized)
@@ -92,65 +103,37 @@ def binarize(args, sess, loader, layer):
 	# codes_all_this_digit = new_labels[indexer_for_this_digit]
 
 
-	fig, axes = plt.subplots(10,10, figsize=(20,20), dpi=150)
-	fig.subplots_adjust(hspace=.01, wspace=.02, left=.02, right=1, top=1, bottom=0)
-	for i in xrange(10):
-		# pick out this digit
-		all_this_digit = binarized[labels==i,:]
-		axes[i,0].set_ylabel("{}".format(i))
-		for j in xrange(10):
-			squaredims = int(math.floor(np.sqrt( args.layers[layer] )))
-			this_digit = all_this_digit[j,:squaredims**2].reshape((squaredims,squaredims))
-			ax = axes[i,j]
-			ax.imshow(this_digit, cmap='gray')
-			ax.set_xticklabels([])
-			ax.set_yticklabels([])
-			ax.grid('off')
-			ax.set_aspect('equal')
-	fig.savefig(os.path.join(args.save_folder, 'layer_{}_activations_heatmap_binarized'.format(layer)))
 
+def analyze():
+	model_folders = sys.argv[1:]
 
-	
+	for model_folder in model_folders:
+		args, sess, loader = restore_model(model_folder)
+		with sess:
+			count = count_clusters(args, sess, loader, 0, return_clusters=False, thresh=.01)
+			activations_heatmap(args, sess, loader, 0)
 
+			embeddings, labels = get_layer(sess, loader, 'layer_embedding_activation:0', 'test')
+			plot(args, embeddings, labels, 'Embedding layer', 'embedding')
+			print("Entropy reg lambda: {} Number of clusters: {}".format(model_folder[len('saved_'):], count))
+			continue
 
+			if args.add_noise:
+				noised_image_reconstruction(args, sess, loader)
 
+			train_loss = calculate_loss(sess, loader, 'train')
+			test_loss = calculate_loss(sess, loader, 'test')
 
-def cluster():
-	with open('{}/args.pkl'.format(folder), 'rb') as f:
-		args = cPickle.load(f)
-	args.dropout_p = 1.
+			print("Train loss: {:.3f} Test loss: {:.3f}".format(train_loss, test_loss))
+			
+			reconstruction, labels = get_layer(sess, loader, 'layer_output_activation:0')
 
-	args = add_to_args(args)
+			plot_pca(args, reconstruction, labels, layer_name='reconstruction')
 
-	loader = Loader(args)
-
-	# initialize
-	with tf.Session() as sess:
-		ckpt = tf.train.get_checkpoint_state(args.save_folder)
-		saver = tf.train.import_meta_graph('{}.meta'.format(ckpt.model_checkpoint_path))
-		saver.restore(sess, ckpt.model_checkpoint_path)
-
-
-		activations_heatmap(args, sess, loader, 0)
-		#binarize(args, sess, loader, 0)
-		
-
-		if args.add_noise:
-			noised_image_reconstruction(args, sess, loader)
-
-		train_loss = calculate_loss(sess, loader, 'train')
-		test_loss = calculate_loss(sess, loader, 'test')
-
-		print "Train loss: {:.3f} Test loss: {:.3f}".format(train_loss, test_loss)
-		
-		reconstruction, labels = get_layer(sess, loader, 'layer_output_activation:0')
-
-		plot_pca(args, reconstruction, labels, layer_name='reconstruction')
-
-		plot_tsne(args, reconstruction, labels, layer_name='reconstruction', n=0)
+			plot_tsne(args, reconstruction, labels, layer_name='reconstruction', n=0)
 
 
 
 
 if __name__=='__main__':
-	cluster()
+	analyze()

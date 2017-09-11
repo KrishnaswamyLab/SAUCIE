@@ -1,7 +1,7 @@
 import tensorflow as tf
 import numpy as np
 from tensorflow.contrib.layers import batch_norm as bn
-import sys, os, time, math, argparse, cPickle
+import sys, os, time, math, argparse
 import matplotlib.pyplot as plt
 from utils import *
 
@@ -39,7 +39,8 @@ class MLP(object):
 
 		for i,layer in enumerate(input_plus_layers[:-2]):
 			if i==0:
-				l = Layer('layer_encoder_{}'.format(i), input_plus_layers[i], input_plus_layers[i+1], tf.nn.softmax, args.dropout_p, batch_norm=args.batch_norm)
+				act_f = lambda x: tf.nn.softmax(tf.nn.relu(x))
+				l = Layer('layer_encoder_{}'.format(i), input_plus_layers[i], input_plus_layers[i+1], act_f, args.dropout_p, batch_norm=args.batch_norm)
 			else:
 				l = Layer('layer_encoder_{}'.format(i), input_plus_layers[i], input_plus_layers[i+1], args.activation, args.dropout_p, batch_norm=args.batch_norm)
 			self.layers_encoder.append(l)
@@ -66,7 +67,12 @@ class MLP(object):
 				l = Layer('layer_decoder_{}'.format(i), layers_decoder[i], layers_decoder[i+1], args.activation, args.dropout_p, batch_norm=args.batch_norm)
 			self.layers_decoder.append(l)
 		# last decoder layer is linear and fully-connected
-		self.layers_decoder.append(Layer('layer_output', layers_decoder[-2], layers_decoder[-1], tf.nn.sigmoid, 1., batch_norm=args.batch_norm))
+		if args.loss=='mse':
+			output_act = tf.nn.relu
+		elif args.loss=='bce':
+			output_act = tf.nn.sigmoid
+		output_act = tf.identity
+		self.layers_decoder.append(Layer('layer_output', layers_decoder[-2], layers_decoder[-1], output_act, 1., batch_norm=args.batch_norm))
 
 		self.reconstructed = self.feedforward_decoder(self.embedded)
 		#########################################################################
@@ -79,7 +85,7 @@ class MLP(object):
 			self.loss_recon = (self.reconstructed - self.y)**2
 		elif args.loss=='bce':
 			self.loss_recon = -(self.y*tf.log(self.reconstructed+1e-9) + (1-self.y)*tf.log(1-self.reconstructed+1e-9))
-		self.loss_recon = tf.identity(tf.reduce_mean(self.loss_recon), name='loss_recon')
+		self.loss_recon = tf.reduce_mean(self.loss_recon, name='loss_recon')
 
 		# sparsity regularization
 		self.loss_sparse = tf.constant(0.)
@@ -102,11 +108,13 @@ class MLP(object):
 					elif args.normalization_method=='none':
 						normalized = act
 					normalized = tf.identity(normalized, 'normalized_activations_layer_{}'.format(add_entropy_to))
-					self.loss_entropy += args.lambda_entropy*tf.reduce_sum(-normalized*tf.log(normalized+1e-9))
+					self.loss_entropy += args.lambda_entropy*tf.reduce_sum(-normalized*tf.log(normalized+1e-9) - (1-normalized)*tf.log(1-normalized+1e-9))
 		self.loss_entropy = tf.identity(self.loss_entropy, name='loss_entropy')
 
 		# l2 regularization
-		self.loss_reg = tf.identity(args.lambda_l2*sum([tf.nn.l2_loss(tv) for tv in tf.global_variables() if 'W_' in tv.name]), name='loss_reg')
+		# self.loss_reg = tf.identity(args.lambda_l2*sum([tf.nn.l2_loss(tv) for tv in tf.global_variables() if 'W_' in tv.name]), name='loss_reg')
+		self.loss_reg = tf.identity(args.lambda_l1*tf.reduce_mean([tf.reduce_mean(tf.abs(tv)) for tv in tf.global_variables()]), name='loss_l1')
+		self.loss_reg += tf.identity(args.lambda_l2*tf.reduce_mean([tf.reduce_mean(tf.nn.l2_loss(tv)) for tv in tf.global_variables()]), name='loss_reg')
 
 		# total loss
 		self.loss = self.loss_recon + self.loss_sparse + self.loss_reg + self.loss_entropy
@@ -122,15 +130,15 @@ class MLP(object):
 
 	def feedforward_encoder(self, x):
 		for i,l in enumerate(self.layers_encoder):
-			print x
+			print(x)
 			x = l(x)
 		return x
 
 	def feedforward_decoder(self, x):
 		for i,l in enumerate(self.layers_decoder):
-			print x
+			print(x)
 			x = l(x)
-		print x
+		print(x)
 		return x
 
 	def write_graph(self, sess):
