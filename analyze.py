@@ -109,14 +109,35 @@ def analyze():
 
 	for model_folder in model_folders:
 		args, sess, loader = restore_model(model_folder)
+		print("\n", args.save_folder)
 		with sess:
-			count = count_clusters(args, sess, loader, 0, return_clusters=False, thresh=.01)
+			
+			for t in [i/10. for i in range(10)]:
+				count, new_labels = count_clusters(args, sess, loader, 0, thresh=t, return_clusters=True)		
+				print(t, count)
+			sys.exit()	
+			normalized, labels = get_layer(sess, loader, 'normalized_activations_layer_0:0', 'test')
+			normalized = np.where(normalized>.5, 1, 0)
+			# embeddings, labels = get_layer(sess, loader, 'layer_embedding_activation:0', 'test')
+
+			# modularity = calculate_modularity(normalized, labels, sigma=.5)
+
+			print("Modularity: {:.3f}".format(modularity))
+			continue
+				
+			plot(args, embeddings, labels, 'Embedding layer', 'embedding')
+
+
+			count, new_labels = count_clusters(args, sess, loader, 0, return_clusters=True)
 			activations_heatmap(args, sess, loader, 0)
 
-			embeddings, labels = get_layer(sess, loader, 'layer_embedding_activation:0', 'test')
-			plot(args, embeddings, labels, 'Embedding layer', 'embedding')
-			print("Entropy reg lambda: {} Number of clusters: {}".format(model_folder[len('saved_'):], count))
 			continue
+
+
+
+
+
+
 
 			if args.add_noise:
 				noised_image_reconstruction(args, sess, loader)

@@ -13,24 +13,24 @@ def parse_args():
 
 
 	# NAME
-	parser.add_argument('--save_folder', type=str, default='saved_cytof')
-	parser.add_argument('--data', type=str, default='cytof_emt')
+	parser.add_argument('--save_folder', type=str, default='saved_sigmoidact')
+	parser.add_argument('--data', type=str, default='MNIST')
 	parser.add_argument('--data_folder', type=str, default='/home/krishnan/data/emt_cytof_data')
 
 	# TRAINING PARAMETERS
 	parser.add_argument('--batch_size', type=int, default=100)
 	parser.add_argument('--learning_rate', type=float, default=.001)
-	parser.add_argument('--num_epochs', type=int, default=1000)
+	parser.add_argument('--num_epochs', type=int, default=100)
 	parser.add_argument('--save_every', type=int, default=1000)
 	parser.add_argument('--print_every', type=int, default=100)
 	parser.add_argument('--max_iterations', type=int, default=10000)
 	
 	# MODEL ARCHITECTURE
-	# parser.add_argument('--layers', type=str, default='1024,512,256,2')
+	parser.add_argument('--layers', type=str, default='1024,512,256,2')
 	# parser.add_argument('--layers', type=str, default='128,64,32,2') # make it faster while testing
-	parser.add_argument('--layers', type=str, default='64,32,16,2') # make it faster while testing
-	parser.add_argument('--activation', type=str, default='relu')
-	parser.add_argument('--loss', type=str, default='mse')
+	# parser.add_argument('--layers', type=str, default='64,32,16,2') # make it faster while testing
+	parser.add_argument('--activation', type=str, default='tanh')
+	parser.add_argument('--loss', type=str, default='bce')
 	parser.add_argument('--dropout_p', type=float, default=1.)
 	parser.add_argument('--batch_norm', type=bool, default=True)
 	
@@ -40,9 +40,10 @@ def parse_args():
 	parser.add_argument('--layers_sparsity', type=str, default='')
 	parser.add_argument('--lambda_sparsity', type=float, default=0)
 	parser.add_argument('--layers_entropy', type=str, default='0')
-	parser.add_argument('--lambda_entropy', type=float, default=.001)
+	parser.add_argument('--lambdas_entropy', type=str, default='.00001')
 	parser.add_argument('--normalization_method', type=str, default='none')
-	parser.add_argument('--thresh', type=float, default=.1)
+	parser.add_argument('--thresh', type=float, default=.9)
+	parser.add_argument('--sigma', type=float, default=.5)
 
 	# NOISE
 	parser.add_argument('--add_noise', type=bool, default=False)
@@ -61,6 +62,7 @@ def process_args(args):
 	args.layers = [int(l) for l in args.layers.split(',')] if len(args.layers)>0 else []
 	args.layers_sparsity = [int(l) for l in args.layers_sparsity.split(',')] if len(args.layers_sparsity)>0 else []
 	args.layers_entropy = [int(l) for l in args.layers_entropy.split(',')] if len(args.layers_entropy)>0 else []
+	args.lambdas_entropy= [float(l) for l in args.lambdas_entropy.split(',')] if len(args.lambdas_entropy)>0 else []
 
 	# parse activation
 	if args.activation=='relu': args.activation = tf.nn.relu
@@ -100,32 +102,6 @@ def save(args, sess, mlp, saver, loader, iteration):
 	saver.save(sess, savefile , global_step=iteration, write_meta_graph=True)
 	print("Model saved to {}".format(savefile))
 
-def calc_randind(args, sess, mlp, loader):
-	# get randints
-	randints = []
-	names =['layer_encoder_{}_activation:0'.format(i) for i in range(3)] + ['layer_embedding_activation:0']
-	for name in names:
-		act_tensor = tbn(name)
-		labels = []
-		acts = []
-		for batch, batch_labels in loader.iter_batches('test'):
-			feed = {mlp.x:batch}
-			[act] = sess.run([act_tensor], feed_dict=feed)
-
-			labels.append(batch_labels)
-			acts.append(act)
-		acts = np.concatenate(acts, axis=0)
-		labels = np.concatenate(labels, axis=0)
-
-		km = KMeans(10)
-		km.fit(acts)
-		clusts = km.predict(acts)
-
-		randint = float(adjusted_rand_score(labels, clusts))
-		randints.append(randint)
-
-	print("Randinds: {}".format(str(['{:.3f}'.format(r) for r in randints])))
-
 def train(args):
 
 	loader = get_loader(args)
@@ -156,7 +132,6 @@ def train(args):
 						mlp.y:batch,
 						mlp.learning_rate:args.learning_rate}
 
-
 				[l,lrec,lreg,lspa,le, _] = sess.run(losses + [obn('train_op')], feed_dict=feed)
 
 
@@ -165,19 +140,33 @@ def train(args):
 					print("epoch/iter: {}/{} loss: {:.3f} ({:.3f} {:.3f} {:.3f} {:.3f}) time: {:.1f}".format(epoch,
 						iteration, l, lrec, lreg, lspa, le, time.time() - t))
 					t = time.time()
-
+					
 				# save
 				if args.save_every and iteration%args.save_every==0:
 					save(args, sess, mlp, saver, loader, iteration)
 
 					embeddings, labels = get_layer(sess, loader, 'layer_embedding_activation:0')
+					input_layer, labels = get_layer(sess, loader, 'x:0')
+					reconstruction, labels = get_layer(sess, loader, 'layer_output_activation:0')
 
-					plot(args, embeddings, labels, 'Embedding layer', 'embedding')
+					plot(args, embeddings, labels, 'Embedding layer by label', 'embedding_by_label')
+					plot_mnist(args, input_layer, labels, embeddings, 'orig')
+					plot_mnist(args, reconstruction, labels, embeddings, 'recon')
+					show_result(input_layer, args.save_folder+'/original_images.png')
+					show_result(reconstruction, args.save_folder+'/reconstructed_images.png')
+					# modularity = calculate_modularity(normalized, labels, args.sigma)
+					# print("Modularity: {:.3f}".format(modularity))
 
-					count = count_clusters(args, sess, loader, 0, thresh=args.thresh)
-					print("entropy/sparsity lambda: {}/{} Number of clusters: {}".format(args.lambda_entropy, args.lambda_sparsity, count))
-
-					activations_heatmap(args, sess, loader, 0)
+					for l in args.layers_entropy:
+						# normalized, _ = get_layer(sess, loader, 'normalized_activations_layer_{}:0'.format(l))
+						# normalized = np.where(normalized>args.thresh,1,0)
+						count, clusters = count_clusters(args, sess, loader, l, thresh=args.thresh, return_clusters=True)
+						plot(args, embeddings, clusters, 'Embedding layer by cluster', 'embedding_by_cluster')
+						print("entropy lambdas: {} Number of clusters: {}".format(args.lambdas_entropy, count))
+						silhouette_score = calculate_silhouette(input_layer, labels)
+						print("silhouette score: {:.3f}".format(silhouette_score))
+						# print("randinds: {:.3f}".format((calculate_randinds(labels, clusters))))
+						# activations_heatmap(args, sess, loader, l)
 
 			# after each epoch potentiall break out
 			if args.max_iterations and iteration > args.max_iterations: break
@@ -186,8 +175,9 @@ def train(args):
 		if args.save_every:
 			save(args, sess, mlp, saver, loader, iteration)
 
-		count = count_clusters(args, sess, loader, 0, thresh=args.thresh)
-		print("Final number of clusters (e/s: {}/{}): {}".format(args.lambda_entropy, args.lambda_sparsity, count))
+		for l in args.layers_entropy:
+			count = count_clusters(args, sess, loader, l, thresh=args.thresh)
+			print("Final entropy lambdas: {} Number of clusters: {}".format(args.lambdas_entropy, count))
 			
 
 

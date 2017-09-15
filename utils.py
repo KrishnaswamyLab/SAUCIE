@@ -1,16 +1,81 @@
-import sys, os, time, math, argparse
+import sys, os, time, math, argparse, contextlib
 import tensorflow as tf
 import numpy as np
 import matplotlib.pyplot as plt
 from skimage.io import imsave
 from sklearn.manifold import TSNE
 import seaborn as sns
+import phenograph
 from loader import Loader, Loader_cytof_emt
+from sklearn.metrics import adjusted_rand_score, silhouette_score
+from scipy.spatial.distance import pdist, squareform
+import matplotlib.cm as cm
+from skimage.io import imsave
+from matplotlib import offsetbox
 # sns.set_style('darkgrid')
 # sns.set_palette('muted')
 # sns.set_context("notebook", font_scale=1.5,
 #                 rc={"lines.linewidth": 2.5})
 
+def plot_mnist(args, X, y, X_embedded, name, min_dist=15.):
+	fig, ax = plt.subplots(1,1, figsize=(10,10), frameon=False)
+	ax.set_xticks([])
+	ax.set_yticks([])
+	plt.subplots_adjust(left=0.0, bottom=0.0, right=1.0, top=0.9, wspace=0.0, hspace=0.0)
+	ax.scatter(X_embedded[:, 0], X_embedded[:, 1], c=y)
+
+	if min_dist is not None:
+		for i in range(10):
+			for d in range(10):
+				shown_images = np.array([[15., 15.]])
+				# indices = np.arange(X_embedded.shape[0])
+				# np.random.shuffle(indices)
+				# for i in indices[:5000]:
+				dist = np.sum((X_embedded[y==d][i] - shown_images) ** 2, 1)
+				if np.min(dist) < min_dist:
+					continue
+				shown_images = np.r_[shown_images, [X_embedded[y==d][i]]]
+				imagebox = offsetbox.AnnotationBbox( 
+					offsetbox.OffsetImage(X[y==d][i].reshape(28, 28), cmap=cm.gray_r), X_embedded[y==d][i]
+					)
+				ax.add_artist(imagebox)
+	fig.savefig(args.save_folder+'/embed_w_images'+name)
+
+
+
+class SilentFile(object):
+    def write(self, x): pass
+    def flush(self): pass
+
+@contextlib.contextmanager
+def silence():
+    save_stdout = sys.stdout
+    sys.stdout = SilentFile()
+    yield
+    sys.stdout = save_stdout
+
+
+def show_result(batch_res, fname, grid_size=(8, 8), grid_pad=5):
+	img_height = 28
+	img_width = 28
+	batch_res = batch_res.reshape((batch_res.shape[0], img_height, img_width))
+	img_h, img_w = batch_res.shape[1], batch_res.shape[2]
+	grid_h = img_h * grid_size[0] + grid_pad * (grid_size[0] - 1)
+	grid_w = img_w * grid_size[1] + grid_pad * (grid_size[1] - 1)
+	img_grid = np.zeros((grid_h, grid_w), dtype=np.uint8)
+	for i, res in enumerate(batch_res):
+		if i >= grid_size[0] * grid_size[1]:
+			break
+		img = (res) * 255
+		img = img.astype(np.uint8)
+		row = (i // grid_size[0]) * (img_h + grid_pad)
+		col = (i % grid_size[1]) * (img_w + grid_pad)
+		img_grid[row:row + img_h, col:col + img_w] = img
+	imsave(fname, img_grid)
+
+def lrelu(x, leak=0.2, name="lrelu"):
+
+  return tf.maximum(x, leak*x)
 
 def get_loader(args):
 	if args.data == 'MNIST':
@@ -26,6 +91,11 @@ def tbn(name):
 def obn(name):
 
 	return tf.get_default_graph().get_operation_by_name(name)
+
+def to_one_hot(y, n):
+	h = np.zeros((y.shape[0], n))
+	h[np.arange(y.shape[0]), y] = 1
+	return h
 
 def get_layer(sess, loader, name, test_or_train='test'):
 	tensor = tbn(name)
@@ -128,13 +198,11 @@ def calculate_loss(sess, loader, train_or_test='test'):
 def count_clusters(args, sess, loader, layer, thresh=.5, return_clusters=False):
 	'''Counts the number of clusters after binarizing the activations of the given layer.'''
 	acts, labels = get_layer(sess, loader, 'normalized_activations_layer_{}:0'.format(layer))
-
+	# print(acts.argmax(axis=1)[:5])
+	# print(acts.max(axis=1)[:5])
 	binarized = np.where(acts>thresh, 1, 0)
 	unique_rows = np.vstack({tuple(row) for row in binarized})
 	num_clusters = unique_rows.shape[0]
-
-	# print(binarized.argmax(axis=1))
-	# print(np.unique(binarized.argmax(axis=1)))
 
 	new_labels = np.zeros(labels.shape)
 
@@ -147,8 +215,27 @@ def count_clusters(args, sess, loader, layer, thresh=.5, return_clusters=False):
 		# print(np.array([unique,counts]).T)
 
 	acts, _ = get_layer(sess, loader, 'layer_embedding_activation:0')
-	plot(args, acts, new_labels, 'embedding by cluster (entropy/sparsity: {}/{})'.format(args.lambda_entropy, args.lambda_sparsity), 'embedding_by_cluster')
+	plot(args, acts, new_labels, 'embedding by cluster', 'embedding_by_cluster_{}'.format(layer))
 
 	if return_clusters:
-		return num_clusters, return_clusters
+		return num_clusters, new_labels 
 	return num_clusters		
+
+def calculate_randinds(labels1, labels2):
+
+	return adjusted_rand_score(labels1, labels2)
+
+def calculate_modularity(x, labels, sigma):
+	labels = to_one_hot(labels, labels.max()+1)
+	pairwise_sq_dists = squareform(pdist(x, 'sqeuclidean'))
+	A = np.exp(-pairwise_sq_dists / sigma**2)
+	A = A - np.eye(x.shape[0])
+	k = A.sum(axis=0)
+	M = A.sum()
+	B = A - k.reshape((-1,1)).dot(k.reshape((1,-1))) / M
+	Q = np.trace(labels.T.dot(B).dot(labels)) / M
+	return Q
+
+def calculate_silhouette(x, labels):
+
+	return silhouette_score(x, labels)

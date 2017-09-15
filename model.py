@@ -37,9 +37,10 @@ class MLP(object):
 		self.layers_encoder = []
 		input_plus_layers = [args.input_dim] + args.layers
 
+		act_f = lambda x: tf.nn.softmax(tf.nn.relu(x))
 		for i,layer in enumerate(input_plus_layers[:-2]):
-			if i==0:
-				act_f = lambda x: tf.nn.softmax(tf.nn.relu(x))
+			if i in args.layers_entropy:
+				print("Adding entropy to {}".format(i))
 				l = Layer('layer_encoder_{}'.format(i), input_plus_layers[i], input_plus_layers[i+1], act_f, args.dropout_p, batch_norm=args.batch_norm)
 			else:
 				l = Layer('layer_encoder_{}'.format(i), input_plus_layers[i], input_plus_layers[i+1], args.activation, args.dropout_p, batch_norm=args.batch_norm)
@@ -71,7 +72,6 @@ class MLP(object):
 			output_act = tf.nn.relu
 		elif args.loss=='bce':
 			output_act = tf.nn.sigmoid
-		output_act = tf.identity
 		self.layers_decoder.append(Layer('layer_output', layers_decoder[-2], layers_decoder[-1], output_act, 1., batch_norm=args.batch_norm))
 
 		self.reconstructed = self.feedforward_decoder(self.embedded)
@@ -84,6 +84,7 @@ class MLP(object):
 		if args.loss=='mse':
 			self.loss_recon = (self.reconstructed - self.y)**2
 		elif args.loss=='bce':
+			# self.loss_recon = -(self.y*tf.log(self.reconstructed+1e-9))
 			self.loss_recon = -(self.y*tf.log(self.reconstructed+1e-9) + (1-self.y)*tf.log(1-self.reconstructed+1e-9))
 		self.loss_recon = tf.reduce_mean(self.loss_recon, name='loss_recon')
 
@@ -98,7 +99,7 @@ class MLP(object):
 		# fuzzy counting regularization
 		self.loss_entropy = tf.constant(0.)
 		for act in tf.get_collection('activations'):
-			for add_entropy_to in args.layers_entropy:
+			for add_entropy_to, lambda_entropy in zip(args.layers_entropy, args.lambdas_entropy):
 				if 'encoder_{}'.format(add_entropy_to) in act.name:
 					if args.normalization_method=='l2norm':
 						norm = tf.norm(act+1e-9, axis=1, keep_dims=True)
@@ -108,7 +109,7 @@ class MLP(object):
 					elif args.normalization_method=='none':
 						normalized = act
 					normalized = tf.identity(normalized, 'normalized_activations_layer_{}'.format(add_entropy_to))
-					self.loss_entropy += args.lambda_entropy*tf.reduce_sum(-normalized*tf.log(normalized+1e-9) - (1-normalized)*tf.log(1-normalized+1e-9))
+					self.loss_entropy += lambda_entropy*tf.reduce_sum(-normalized*tf.log(normalized+1e-9) - (1-normalized)*tf.log(1-normalized+1e-9))
 		self.loss_entropy = tf.identity(self.loss_entropy, name='loss_entropy')
 
 		# l2 regularization

@@ -1,8 +1,6 @@
 import os, sys, glob, math, io, contextlib
 import numpy as np
-from sklearn.decomposition import PCA
 from tensorflow.examples.tutorials.mnist import input_data
-
 
 class SilentFile(object):
     def write(self, x): pass
