@@ -2,16 +2,18 @@ import sys, os, time, math, argparse, contextlib
 import tensorflow as tf
 import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib.cm as cm
+import pandas as pd
+from matplotlib import offsetbox
+from loader import Loader, Loader_cytof_emt
 from skimage.io import imsave
 from sklearn.manifold import TSNE
-import seaborn as sns
-import phenograph
-from loader import Loader, Loader_cytof_emt
 from sklearn.metrics import adjusted_rand_score, silhouette_score
+from sklearn.decomposition import PCA
 from scipy.spatial.distance import pdist, squareform
-import matplotlib.cm as cm
 from skimage.io import imsave
-from matplotlib import offsetbox
+
+# import seaborn as sns
 # sns.set_style('darkgrid')
 # sns.set_palette('muted')
 # sns.set_context("notebook", font_scale=1.5,
@@ -82,6 +84,13 @@ def get_loader(args):
 		loader = Loader(args)
 	elif args.data == 'cytof_emt':
 		loader = Loader_cytof_emt(args)
+	elif args.data == 'ZIKA':
+		loader = Loader(args)
+	elif args.data == 'FLU':
+		loader = Loader(args)
+	else:
+		raise Exception("Couldn't parse name of data to use: {}".format(args.data))
+
 	return loader
 
 def tbn(name):
@@ -117,12 +126,19 @@ def plot(args, data, labels, title, fn):
 	fig, ax = plt.subplots(1,1)
 	ax.set_title(title)
 
+	if data.shape[1]>2:
+		# pca = PCA(2)
+		tsne = TSNE(verbose=2)
+		# data = data[:500,:]
+		# labels = labels[:500]
+		data = tsne.fit_transform(data)
+
 	colors = [plt.cm.jet(float(i)/len(np.unique(labels))) for i in range(len(np.unique(labels)))]
 	for index,lab in enumerate(np.unique(labels)):
 		inds = [True if l==lab else False for l in labels]
 		tmp_data = data[inds,:]
 
-		ax.scatter(tmp_data[:,0], tmp_data[:,1], c=colors[int(index)], alpha=.5, s=12, marker='${}$'.format(index), label=int(lab))
+		ax.scatter(tmp_data[:,0], tmp_data[:,1], c=colors[int(index)], alpha=.3, s=12, marker='${}$'.format(index), label=int(lab))
 
 	lgnd = plt.legend(scatterpoints=1, prop={'size':6})
 	for lh in lgnd.legendHandles:
@@ -198,8 +214,9 @@ def calculate_loss(sess, loader, train_or_test='test'):
 def count_clusters(args, sess, loader, layer, thresh=.5, return_clusters=False):
 	'''Counts the number of clusters after binarizing the activations of the given layer.'''
 	acts, labels = get_layer(sess, loader, 'normalized_activations_layer_{}:0'.format(layer))
+	print(len(np.unique(acts.argmax(axis=1))))
 	# print(acts.argmax(axis=1)[:5])
-	# print(acts.max(axis=1)[:5])
+	print(acts.max(axis=1)[:5])
 	binarized = np.where(acts>thresh, 1, 0)
 	unique_rows = np.vstack({tuple(row) for row in binarized})
 	num_clusters = unique_rows.shape[0]
@@ -215,7 +232,7 @@ def count_clusters(args, sess, loader, layer, thresh=.5, return_clusters=False):
 		# print(np.array([unique,counts]).T)
 
 	acts, _ = get_layer(sess, loader, 'layer_embedding_activation:0')
-	plot(args, acts, new_labels, 'embedding by cluster', 'embedding_by_cluster_{}'.format(layer))
+	# plot(args, acts, new_labels, 'embedding by cluster', 'embedding_by_cluster_{}'.format(layer))
 
 	if return_clusters:
 		return num_clusters, new_labels 
@@ -239,3 +256,9 @@ def calculate_modularity(x, labels, sigma):
 def calculate_silhouette(x, labels):
 
 	return silhouette_score(x, labels)
+
+def calculate_confusion_matrix(true_labels, clusters):
+	table = pd.crosstab(true_labels, clusters)
+
+	return table
+

@@ -4,6 +4,7 @@
 *.index
 *.json
 *.jpg
+*.mat
 *.meta
 *.out
 *.pyc

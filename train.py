@@ -6,6 +6,7 @@ from model import MLP, tbn, obn
 from sklearn.decomposition import PCA
 from sklearn.cluster import KMeans
 from sklearn.metrics import adjusted_rand_score
+from scipy.io import savemat
 from utils import *
 
 def parse_args():
@@ -13,9 +14,9 @@ def parse_args():
 
 
 	# NAME
-	parser.add_argument('--save_folder', type=str, default='saved_sigmoidact')
-	parser.add_argument('--data', type=str, default='MNIST')
-	parser.add_argument('--data_folder', type=str, default='/home/krishnan/data/emt_cytof_data')
+	parser.add_argument('--save_folder', type=str, default='saved_flu')
+	parser.add_argument('--data', type=str, default='FLU')
+	parser.add_argument('--data_folder', type=str, default='/data/krishnan/flu_data/CD4/IMG 161974 CD4T.csv')
 
 	# TRAINING PARAMETERS
 	parser.add_argument('--batch_size', type=int, default=100)
@@ -28,7 +29,6 @@ def parse_args():
 	# MODEL ARCHITECTURE
 	parser.add_argument('--layers', type=str, default='1024,512,256,2')
 	# parser.add_argument('--layers', type=str, default='128,64,32,2') # make it faster while testing
-	# parser.add_argument('--layers', type=str, default='64,32,16,2') # make it faster while testing
 	parser.add_argument('--activation', type=str, default='tanh')
 	parser.add_argument('--loss', type=str, default='bce')
 	parser.add_argument('--dropout_p', type=float, default=1.)
@@ -39,15 +39,15 @@ def parse_args():
 	parser.add_argument('--lambda_l2', type=float, default=0)
 	parser.add_argument('--layers_sparsity', type=str, default='')
 	parser.add_argument('--lambda_sparsity', type=float, default=0)
-	parser.add_argument('--layers_entropy', type=str, default='0')
-	parser.add_argument('--lambdas_entropy', type=str, default='.00001')
+	parser.add_argument('--layers_entropy', type=str, default='')
+	parser.add_argument('--lambdas_entropy', type=str, default='.001')
 	parser.add_argument('--normalization_method', type=str, default='none')
-	parser.add_argument('--thresh', type=float, default=.9)
+	parser.add_argument('--thresh', type=float, default=.5)
 	parser.add_argument('--sigma', type=float, default=.5)
 
 	# NOISE
-	parser.add_argument('--add_noise', type=bool, default=False)
-	parser.add_argument('--dropout_input', type=bool, default=False)
+	parser.add_argument('--add_noise', type=bool, default=0)
+	parser.add_argument('--dropout_input', type=bool, default=0)
 	parser.add_argument('--add_noise_to_embedding', type=float, default=0)
 
 
@@ -73,7 +73,9 @@ def process_args(args):
 
 	if args.data == 'MNIST': args.input_dim = 28*28
 	elif args.data == 'cytof_emt': args.input_dim = 40
-	else: print("Could not parse data type for input_dim")
+	elif args.data == 'ZIKA': args.input_dim = 35
+	elif args.data == 'FLU': args.input_dim = 40
+	else: raise Exception("Could not parse name of data for input_dim: {}".format(args.data))
 
 	# make save folder
 	if not os.path.exists(args.save_folder):
@@ -103,11 +105,8 @@ def save(args, sess, mlp, saver, loader, iteration):
 	print("Model saved to {}".format(savefile))
 
 def train(args):
-
 	loader = get_loader(args)
-
 	mlp = MLP(args)
-
 
 	# initialize
 	with tf.Session() as sess:
@@ -123,10 +122,10 @@ def train(args):
 
 				x = batch
 				if args.add_noise:
-					x = batch + np.random.normal(0,.1, batch.shape)
+					x = batch + np.random.normal(0,args.add_noise, batch.shape)
 					x = np.maximum(np.minimum(x, 1.), 0.)
 				if args.dropout_input:
-					x *= np.random.binomial(1,.5, x.shape)
+					x *= np.random.binomial(1,args.dropout_input, x.shape)
 
 				feed = {mlp.x:x,
 						mlp.y:batch,
@@ -149,24 +148,51 @@ def train(args):
 					input_layer, labels = get_layer(sess, loader, 'x:0')
 					reconstruction, labels = get_layer(sess, loader, 'layer_output_activation:0')
 
-					plot(args, embeddings, labels, 'Embedding layer by label', 'embedding_by_label')
-					plot_mnist(args, input_layer, labels, embeddings, 'orig')
-					plot_mnist(args, reconstruction, labels, embeddings, 'recon')
-					show_result(input_layer, args.save_folder+'/original_images.png')
-					show_result(reconstruction, args.save_folder+'/reconstructed_images.png')
+					
+					if args.layers[-1]==2:
+						plot(args, embeddings, labels, 'Embedding layer by label', 'embedding_by_label')
+						if args.data=='MNIST':
+							plot_mnist(args, input_layer, labels, embeddings, 'orig')
+							plot_mnist(args, reconstruction, labels, embeddings, 'recon')
+					if args.data=='MNIST':
+						show_result(input_layer, args.save_folder+'/original_images.png')
+						show_result(reconstruction, args.save_folder+'/reconstructed_images.png')
+					if args.dropout_input or args.add_noise:
+						input_layer_noisy = input_layer
+						if args.add_noise:
+							input_layer_noisy = input_layer + np.random.normal(0,args.add_noise, input_layer.shape)
+							input_layer_noisy = np.maximum(np.minimum(input_layer_noisy, 1.), 0.)
+						if args.dropout_input:
+							input_layer_noisy *= np.random.binomial(1,args.dropout_input, input_layer_noisy.shape)
+						if args.data=='MNIST':
+							show_result(input_layer_noisy, args.save_folder+'/original_images_noisy.png')
+					
+
 					# modularity = calculate_modularity(normalized, labels, args.sigma)
 					# print("Modularity: {:.3f}".format(modularity))
+					if not args.layers_entropy:
+						plot(args, embeddings, np.zeros(embeddings.shape[0]), 'Embedding layer', 'embedding_without_idreg')
 
 					for l in args.layers_entropy:
 						# normalized, _ = get_layer(sess, loader, 'normalized_activations_layer_{}:0'.format(l))
 						# normalized = np.where(normalized>args.thresh,1,0)
 						count, clusters = count_clusters(args, sess, loader, l, thresh=args.thresh, return_clusters=True)
-						plot(args, embeddings, clusters, 'Embedding layer by cluster', 'embedding_by_cluster')
+						plot(args, embeddings, clusters, 'Embedding layer by cluster', 'embedding_by_cluster_{}'.format(l))
 						print("entropy lambdas: {} Number of clusters: {}".format(args.lambdas_entropy, count))
-						silhouette_score = calculate_silhouette(input_layer, labels)
-						print("silhouette score: {:.3f}".format(silhouette_score))
-						# print("randinds: {:.3f}".format((calculate_randinds(labels, clusters))))
+						# table = calculate_confusion_matrix(labels, clusters)
+						# table = table / table.sum(axis=0)
+						# table = table.transpose()
+						# table['amax'] = table.idxmax(axis=1)
+						# table = table.sort_values('amax')
+						# del table['amax']
+						# table = table.transpose()
+						# fig, ax = plt.subplots(1,1)
+						# ax.imshow(table.as_matrix(), cmap='jet')
+						# fig.savefig(args.save_folder + '/confusion_matrix_{}.png'.format(l))
 						# activations_heatmap(args, sess, loader, l)
+
+						# savemat(args.save_folder+'/test_data.mat', {'true_labels':labels, 'clusters':clusters, 'embedding': embeddings})
+					plt.close('all')
 
 			# after each epoch potentiall break out
 			if args.max_iterations and iteration > args.max_iterations: break

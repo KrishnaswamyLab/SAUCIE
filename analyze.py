@@ -112,12 +112,26 @@ def analyze():
 		print("\n", args.save_folder)
 		with sess:
 			
-			for t in [i/10. for i in range(10)]:
-				count, new_labels = count_clusters(args, sess, loader, 0, thresh=t, return_clusters=True)		
-				print(t, count)
-			sys.exit()	
+			# for t in [i/10. for i in range(10)]:
+			# 	count, new_labels = count_clusters(args, sess, loader, 0, thresh=t, return_clusters=True)		
+			# 	print(t, count)
+			
+
+			
+
+			count, new_labels = count_clusters(args, sess, loader, 0, return_clusters=True)
 			normalized, labels = get_layer(sess, loader, 'normalized_activations_layer_0:0', 'test')
 			normalized = np.where(normalized>.5, 1, 0)
+
+
+			x, labels = get_layer(sess, loader, "x:0", 'test')
+			plot(args, x, new_labels, 'tsne', 'tsne')
+			sys.exit()
+
+
+			# table = calculate_confusion_matrix(labels, new_labels)
+			# table.to_csv(args.save_folder + '/confusion_matrix.csv')
+			# sys.exit()
 			# embeddings, labels = get_layer(sess, loader, 'layer_embedding_activation:0', 'test')
 
 			# modularity = calculate_modularity(normalized, labels, sigma=.5)

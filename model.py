@@ -37,7 +37,7 @@ class MLP(object):
 		self.layers_encoder = []
 		input_plus_layers = [args.input_dim] + args.layers
 
-		act_f = lambda x: tf.nn.softmax(tf.nn.relu(x))
+		# act_f = lambda x: tf.nn.softmax(tf.nn.relu(x)/.1)
 		for i,layer in enumerate(input_plus_layers[:-2]):
 			if i in args.layers_entropy:
 				print("Adding entropy to {}".format(i))
@@ -51,7 +51,7 @@ class MLP(object):
 		self.embedded = self.feedforward_encoder(self.x)
 		if args.add_noise_to_embedding:
 			noise = tf.random_normal(self.embedded.get_shape(), mean=0, stddev=args.add_noise_to_embedding, name='embedding_noise')
-			self.embedded += tf.identity(noise, name='noisy_embedding')
+			self.embedded_noisy = self.embedded + tf.identity(noise, name='noisy_embedding')
 		#########################################################################
 
 
@@ -69,12 +69,15 @@ class MLP(object):
 			self.layers_decoder.append(l)
 		# last decoder layer is linear and fully-connected
 		if args.loss=='mse':
-			output_act = tf.nn.relu
+			output_act = lrelu #tf.nn.relu
 		elif args.loss=='bce':
 			output_act = tf.nn.sigmoid
 		self.layers_decoder.append(Layer('layer_output', layers_decoder[-2], layers_decoder[-1], output_act, 1., batch_norm=args.batch_norm))
 
-		self.reconstructed = self.feedforward_decoder(self.embedded)
+		if args.add_noise_to_embedding:
+			self.reconstructed = self.feedforward_decoder(self.embedded_noisy)
+		else:
+			self.reconstructed = self.feedforward_decoder(self.embedded)
 		#########################################################################
 
 
@@ -84,7 +87,6 @@ class MLP(object):
 		if args.loss=='mse':
 			self.loss_recon = (self.reconstructed - self.y)**2
 		elif args.loss=='bce':
-			# self.loss_recon = -(self.y*tf.log(self.reconstructed+1e-9))
 			self.loss_recon = -(self.y*tf.log(self.reconstructed+1e-9) + (1-self.y)*tf.log(1-self.reconstructed+1e-9))
 		self.loss_recon = tf.reduce_mean(self.loss_recon, name='loss_recon')
 
