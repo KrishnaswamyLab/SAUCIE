@@ -23,13 +23,23 @@ class SparseLayerConfig(NamedTuple): # NamedTuple('SparseLayerConfig', ['num_lay
     def __repr__(self):
         return 'SparseLayerConfig(id_lam={},l1_lam={})'.format(self.id_lam.tolist(), self.l1_lam.tolist())
 
+    def __eq__(self, other):
+        if isinstance(other, self.__class__):
+            return (other.num_layers == self.num_layers and
+                    (other.id_lam == self.id_lam).all() and 
+                    (other.l1_lam == self.l1_lam).all())
+        return False
 
-def mean_squared_error(predicted, actual, name='mean_squared_error')
+    def __ne__(self, other):
+        return not self.__eq__(other)
+
+
+def mean_squared_error(predicted, actual, name='mean_squared_error'):
     return tf.reduce_mean(tf.square(predicted - actual), name=name)
 
-
 def binary_crossentropy(predicted, actual, name='binary_crossentropy_error'):
-    return -tf.reduce_mean(actual * tf.log(predicted + EPS) + (1 - actual) * tf.log(1 - predicted + EPS), name=name)
+    return -tf.reduce_mean(actual * tf.log(predicted + EPS)
+                           + (1 - actual) * tf.log(1 - predicted + EPS), name=name)
 
 
 # information dimension regularization penalty
@@ -39,6 +49,7 @@ def id_penalty(act, lam, name='id_loss'):
 
 def l1_act_penalty(act, lam, name='l1_loss'):
     return tf.multiply(lam, tf.reduce_mean(tf.abs(act)), name=name)
+
 
 def make_dict_str(d={}, custom_keys=[], subset=[], kv_sep=': ', item_sep=', ',
                   float_format='{:6.5E}'):
@@ -68,6 +79,15 @@ def make_dict_str(d={}, custom_keys=[], subset=[], kv_sep=': ', item_sep=', ',
     return dict_str
 
 
+# Code from TensorFlow Github issue 4079
+# https://github.com/tensorflow/tensorflow/issues/4079
+
+def lrelu(x, leak=0.2, name="lrelu"):
+     with tf.variable_scope(name):
+         f1 = 0.5 * (1 + leak)
+         f2 = 0.5 * (1 - leak)
+         return f1 * x + f2 * abs(x)
+
 
 # Code from Danijar Hafner gist:
 # https://gist.github.com/danijar/8663d3bbfd586bffecf6a0094cd116f2
@@ -89,7 +109,7 @@ def doublewrap(function):
 
 
 @doublewrap
-def define_scope(function, scope=None, *args, **kwargs):
+def define_var_scope(function, scope=None, *args, **kwargs):
     """
     A decorator for functions that define TensorFlow operations. The wrapped
     function will only be executed once. Subsequent calls to it will directly
@@ -106,6 +126,29 @@ def define_scope(function, scope=None, *args, **kwargs):
     def decorator(self):
         if not hasattr(self, attribute):
             with tf.variable_scope(name, *args, **kwargs):
+                setattr(self, attribute, function(self))
+        return getattr(self, attribute)
+    return decorator
+
+
+@doublewrap
+def define_name_scope(function, scope=None, *args, **kwargs):
+    """
+    A decorator for functions that define TensorFlow operations. The wrapped
+    function will only be executed once. Subsequent calls to it will directly
+    return the result so that operations are added to the graph only once.
+    The operations added by the function live within a tf.variable_scope(). If
+    this decorator is used with arguments, they will be forwarded to the
+    variable scope. The scope name defaults to the name of the wrapped
+    function.
+    """
+    attribute = '_cache_' + function.__name__
+    name = scope or function.__name__
+    @property
+    @functools.wraps(function)
+    def decorator(self):
+        if not hasattr(self, attribute):
+            with tf.name_scope(name, *args, **kwargs):
                 setattr(self, attribute, function(self))
         return getattr(self, attribute)
     return decorator
