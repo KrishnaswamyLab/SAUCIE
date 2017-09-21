@@ -55,7 +55,7 @@ def default_config(dataset='mnist'):
 
 
 def make_config(args):
-    sparse_config = utils.SparseLayerConfig(num_layers=3, id_lam=args.id_lam, l1_lam=args.l1_lam)
+    sparse_config = utils.SparseLayerConfig(num_layers=len(args.id_lam), id_lam=args.id_lam, l1_lam=args.l1_lam)
     config = dict(encoder_layers=args.encoder_layers, emb_dim=args.emb_dim, act_fn=args.act_fn,
                   d_act_fn=args.d_act_fn, use_bias=args.use_bias, loss_fn=args.loss_fn, opt_method=args.opt_method,
                   lr=args.lr, batch_norm=args.batch_norm, sparse_config=sparse_config, save_path=args.model_dir)
@@ -96,21 +96,19 @@ class Layer():
                 if self._act_fn:
                     if type(self._act_fn) == list:
                         for act_fn in self._act_fn:
-                            self.hidden_rep_ = ACT_FNS[act_fn](self.hidden_rep_, name='hidden_rep_{}'.format(act_fn))
+                            if act_fn != 'softmax' and self._act_fn[-1] == 'softmax':
+                                self.hidden_rep_ = ACT_FNS[act_fn](self.hidden_rep_, name='hidden_rep_{}'.format(act_fn)) / .1
+                            else:
+                                self.hidden_rep_ = ACT_FNS[act_fn](self.hidden_rep_, name='hidden_rep_{}'.format(act_fn))
                     else:
                         self.hidden_rep_ = ACT_FNS[self._act_fn](self.hidden_rep_, name='hidden_rep')
 
         else:
-            if self._batch_norm:
-                return self.hidden_rep_norm_
-            else:
-                return self.hidden_rep_
-        if self._batch_norm:
-            self.hidden_rep_norm_ = tf.layers.batch_normalization(
-                self.hidden_rep_, training=self.is_training_, name='hidden_rep_norm')
-            return self.hidden_rep_norm_
-        else:
             return self.hidden_rep_
+        if self._batch_norm:
+            self.hidden_rep_ = tf.layers.batch_normalization(
+                self.hidden_rep_, training=self.is_training_, name='hidden_rep_norm')
+        return self.hidden_rep_
 
 
 class Saucie():
@@ -206,9 +204,6 @@ class Saucie():
         self.optimize
         tf.logging.debug('Built SAUCIE loss ops and optimizer')
 
-        self.train_writer = tf.summary.FileWriter(self.save_path + '/logs/train', graph=sess.graph)
-        self.test_writer = tf.summary.FileWriter(self.save_path + '/logs/test', graph=sess.graph)
-
         sess.run(tf.global_variables_initializer())
 
         self.saver = tf.train.Saver(max_to_keep=5)
@@ -229,12 +224,11 @@ class Saucie():
         l1_lam = self._sparse_config.l1_lam
         for i, out_dim in enumerate(self._encoder_layers):
             layer_name = 'layer-{}'.format(i)
-            if type(self._act_fn) == list:
+            act_fn = self._act_fn
+            if type(self._act_fn) == list: # specify act_fn for each layer
                 act_fn = self._act_fn[i]
             if id_lam[i] != 0.:
-                act_fn = [self._act_fn, 'softmax']
-            else:
-                act_fn = self._act_fn
+                act_fn = [act_fn, 'softmax']
             x = self.add_layer(x, in_dim, out_dim, self._batch_norm,
                                layer_name, act_fn, self._use_bias)
             if id_lam[i] != 0.:

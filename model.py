@@ -37,7 +37,7 @@ class MLP(object):
 		self.layers_encoder = []
 		input_plus_layers = [args.input_dim] + args.layers
 
-		# act_f = lambda x: tf.nn.softmax(tf.nn.relu(x)/.1)
+		act_f = lambda x: tf.nn.softmax(tf.nn.relu(x)/.1)
 		for i,layer in enumerate(input_plus_layers[:-2]):
 			if i in args.layers_entropy:
 				print("Adding entropy to {}".format(i))

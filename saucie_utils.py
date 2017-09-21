@@ -10,10 +10,15 @@
 Utils for SAUCIE
 """
 import numpy as np
+import pandas as pd
 import tensorflow as tf
+
+from sklearn.preprocessing import LabelEncoder
+from sklearn.model_selection import train_test_split
 from typing import NamedTuple
 
 EPS = 1e-9
+RAND_SEED = 42
 
 class SparseLayerConfig(NamedTuple): # NamedTuple('SparseLayerConfig', ['num_layers', 'id_lam', 'l1_lam'])
     num_layers: int = 3
@@ -37,14 +42,24 @@ class SparseLayerConfig(NamedTuple): # NamedTuple('SparseLayerConfig', ['num_lay
 def mean_squared_error(predicted, actual, name='mean_squared_error'):
     return tf.reduce_mean(tf.square(predicted - actual), name=name)
 
+
 def binary_crossentropy(predicted, actual, name='binary_crossentropy_error'):
     return -tf.reduce_mean(actual * tf.log(predicted + EPS)
                            + (1 - actual) * tf.log(1 - predicted + EPS), name=name)
 
 
+def binarize(acts, thresh=.5):
+    binarized = np.apply_along_axis(lambda x: bin(int(''.join(str(y) for y in x), 2)), 1,
+                                    np.greater_equal(acts, thresh).astype(int))
+    le = LabelEncoder()
+    binary_classes = le.fit_transform(binarized)
+    print('Unique binary clusters: {}'.format(len(le.classes_)))
+    return binary_classes
+
+
 # information dimension regularization penalty
 def id_penalty(act, lam, name='id_loss'):
-    return tf.multiply(lam, -tf.reduce_mean(act * tf.log(act + EPS)), name=name)
+    return tf.multiply(lam, -tf.reduce_mean(act * tf.log(act + EPS) + (1 - act) * tf.log(1 - act + EPS)), name=name)
 
 
 def l1_act_penalty(act, lam, name='l1_loss'):
@@ -265,4 +280,55 @@ class DataSet:
         batch = (data_batch, labels_batch) if self._labeled else data_batch
         return batch
 
+
+def load_dataset_from_csv(csv_file, header=None, index_col=None, labels=None,
+                          train_ratio=0.9, colnames=None, markers=None, keep_cols=True):
+    if type(csv_file) == list:
+        data = []
+        for csv_fn in csv_file:
+            data.append(pd.read_csv(csv_fn, header=header, index_col=index_col).values)
+        data = np.concatenate(data)
+    else:
+        data = pd.read_csv(csv_file, header=header, index_col=index_col).values
+
+    data_dict = {}
+
+    if colnames:
+        if type(colnames) == str:
+            colnames = [x.strip() for x in open(colnames).readlines()]
+            data_dict['_colnames'] = colnames
+        if markers:
+            data_dict['_markers'] = None
+            if type(markers) == str:
+                markers = [x.strip() for x in open(markers).readlines()]
+            if not keep_cols:
+                data = pd.DataFrame(data, columns=colnames)
+                data = data[markers].values
+                data_dict['_colnames'] = markers
+            else:
+                data_dict['_markers'] = markers
+
+    if labels:
+        if type(labels) == list:
+            for labels_fn in labels_file:
+                labels.append(pd.read_csv(labels_fn, header=None, index_col=None).values)
+            labels = np.concatenate(labels)
+        elif type(labels) == str:
+            labels = pd.read_csv(labels_file, header=None, index_col=None).values
+        elif type(labels) == int:
+            labels = data[:,labels_col]
+            data = np.delete(data, labels_col, 1)
+
+        train_data, test_data, train_labels, test_labels = train_test_split(
+            data, labels, train_size=train_ratio, random_state=RAND_SEED)
+        data_dict['_data'], data_dict['_test_data'] = train_data, test_data
+        data_dict['_labels'], data_dict['_test_labels'] = train_labels, test_labels
+    else:
+        train_data, test_data = train_test_split(data, train_size=train_ratio,
+                                                 random_state=RAND_SEED)
+        data_dict['_data'], data_dict['_test_data'] = train_data, test_data
+        data_dict['labeled'] = False
+
+    dataset = DataSet(**data_dict)
+    return dataset
 

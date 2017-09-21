@@ -12,5 +12,7 @@
 *.png
 *.sh
 *.txt
+*.swp
+saucie_models
 checkpoint
 
