@@ -1,3 +1,12 @@
+# -*- coding: utf-8 -*-
+# File: plotting.py
+# Author: Krishnan Srinivasan <krishnan1994 at gmail>
+# Date: 21.09.2017
+# Last Modified Date: 21.09.2017
+
+"""
+Plotting utils for SAUCIE
+"""
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt

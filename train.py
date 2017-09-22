@@ -40,7 +40,7 @@ def parse_args():
 	parser.add_argument('--lambda_l2', type=float, default=0)
 	parser.add_argument('--layers_sparsity', type=str, default='')
 	parser.add_argument('--lambda_sparsity', type=float, default=0)
-	parser.add_argument('--layers_entropy', type=str, default='')
+	parser.add_argument('--layers_entropy', type=str, default='0')
 	parser.add_argument('--lambdas_entropy', type=str, default='.001')
 	parser.add_argument('--normalization_method', type=str, default='none')
 	parser.add_argument('--thresh', type=float, default=.5)

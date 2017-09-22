@@ -1,10 +1,8 @@
 # -*- coding: utf-8 -*-
-# vim:fenc=utf-8
-#
-# Copyright © 2017 Krishnan Srinivasan <krishnan1994@gmail.com>
-#
-# Distributed under terms of the MIT license.
-# ==============================================================================
+# File: saucie_utils.py
+# Author: Krishnan Srinivasan <krishnan1994 at gmail>
+# Date: 21.09.2017
+# Last Modified Date: 21.09.2017
 
 """
 Utils for SAUCIE
@@ -17,7 +15,7 @@ from sklearn.preprocessing import LabelEncoder
 from sklearn.model_selection import train_test_split
 from typing import NamedTuple
 
-EPS = 1e-9
+EPS = np.float32(1e-8)
 RAND_SEED = 42
 
 class SparseLayerConfig(NamedTuple): # NamedTuple('SparseLayerConfig', ['num_layers', 'id_lam', 'l1_lam'])
@@ -49,17 +47,22 @@ def binary_crossentropy(predicted, actual, name='binary_crossentropy_error'):
 
 
 def binarize(acts, thresh=.5):
-    binarized = np.apply_along_axis(lambda x: bin(int(''.join(str(y) for y in x), 2)), 1,
-                                    np.greater_equal(acts, thresh).astype(int))
-    le = LabelEncoder()
-    binary_classes = le.fit_transform(binarized)
-    print('Unique binary clusters: {}'.format(len(le.classes_)))
-    return binary_classes
+    binarized = np.greater(acts, thresh).astype(int)
+    unique_rows = np.vstack({tuple(row) for row in binarized})
+    num_clusters = unique_rows.shape[0]
+    new_labels = np.zeros(acts.shape[0])
+
+    if num_clusters > 1:
+        print('Unique binary clusters: {}'.format(num_clusters))
+        for i, row in enumerate(unique_rows[1:]):
+            subs = np.where(np.all(binarized == row, axis=1))[0]
+            new_labels[subs] = i
+    return new_labels
 
 
 # information dimension regularization penalty
 def id_penalty(act, lam, name='id_loss'):
-    return tf.multiply(lam, -tf.reduce_mean(act * tf.log(act + EPS) + (1 - act) * tf.log(1 - act + EPS)), name=name)
+    return tf.multiply(lam, -tf.reduce_sum(act * tf.log(act + EPS)), name=name)
 
 
 def l1_act_penalty(act, lam, name='l1_loss'):

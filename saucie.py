@@ -1,10 +1,8 @@
 # -*- coding: utf-8 -*-
-# vim:fenc=utf-8
-#
-# Copyright © 2017 Krishnan Srinivasan <krishnan1994@gmail.com>
-#
-# Distributed under terms of the MIT license.
-# ==============================================================================
+# File: saucie.py
+# Author: Krishnan Srinivasan <krishnan1994 at gmail>
+# Date: 21.09.2017
+# Last Modified Date: 21.09.2017
 
 """
 Classes and functions used to instantiate SAUCIE.
@@ -26,7 +24,8 @@ ACT_FNS = {'lrelu': utils.lrelu,
            'relu': tf.nn.relu,
            'softmax': tf.nn.softmax,
            'softplus': tf.nn.softplus,
-           'sigmoid': tf.nn.sigmoid}
+           'sigmoid': tf.nn.sigmoid,
+           'tanh': tf.nn.tanh}
 
 SAVE_PATH = '/data/krishnan/saucie_models'
 
@@ -66,7 +65,6 @@ def make_config(args):
     return config
 
 
-
 class Layer():
     # defined as class attribute so can be changed for all layers at once
     w_init = tf.contrib.layers.xavier_initializer
@@ -74,7 +72,7 @@ class Layer():
 
     def __init__(self, name, in_dim, out_dim, act_fn='relu', batch_norm=False, is_training=False, use_bias=True):
         self.w_, self.b_ = None, None
-        self.hidden_rep_ = None
+        self.act_ = None
         self.name = name
         self._in_dim = in_dim
         self._out_dim = out_dim
@@ -85,30 +83,29 @@ class Layer():
 
     def __call__(self, x):
         x_dtype = x.dtype
-        if self.hidden_rep_ is None:
+        if self.act_ is None:
             with tf.variable_scope(self.name):
+                if self._batch_norm:
+                    x = tf.layers.batch_normalization(x, training=self.is_training_,
+                                                      name='act_norm')
                 self.w_ = tf.get_variable('w', [self._in_dim, self._out_dim], dtype=x_dtype, initializer=self.w_init(dtype=x_dtype))
                 if self._use_bias:
                     self.b_ = tf.get_variable('b', [self._out_dim], dtype=x_dtype, initializer=self.b_init(dtype=x_dtype))
-                    self.hidden_rep_ = tf.add(tf.matmul(x, self.w_), self.b_, name='hidden_rep_aff')
+                    self.act_ = tf.add(tf.matmul(x, self.w_), self.b_, name='act_aff')
                 else:
-                    self.hidden_rep_ = tf.matmul(x, self.w_, name='hidden_rep_aff')
+                    self.act_ = tf.matmul(x, self.w_, name='act_aff')
                 if self._act_fn:
                     if type(self._act_fn) == list:
                         for act_fn in self._act_fn:
                             if act_fn != 'softmax' and self._act_fn[-1] == 'softmax':
-                                self.hidden_rep_ = ACT_FNS[act_fn](self.hidden_rep_, name='hidden_rep_{}'.format(act_fn)) / .1
+                                self.act_ = ACT_FNS[act_fn](self.act_, name='act_{}'.format(act_fn)) / .1
                             else:
-                                self.hidden_rep_ = ACT_FNS[act_fn](self.hidden_rep_, name='hidden_rep_{}'.format(act_fn))
+                                self.act_ = ACT_FNS[act_fn](self.act_, name='act_{}'.format(act_fn))
                     else:
-                        self.hidden_rep_ = ACT_FNS[self._act_fn](self.hidden_rep_, name='hidden_rep')
-
+                        self.act_ = ACT_FNS[self._act_fn](self.act_, name='hidden_rep')
+            return self.act_
         else:
-            return self.hidden_rep_
-        if self._batch_norm:
-            self.hidden_rep_ = tf.layers.batch_normalization(
-                self.hidden_rep_, training=self.is_training_, name='hidden_rep_norm')
-        return self.hidden_rep_
+            return self.act_
 
 
 class Saucie():
@@ -192,7 +189,7 @@ class Saucie():
 
     def build(self, sess):
         self.sess = sess
-        self.x_ = tf.placeholder(tf.float64, shape=[None, self._input_dim], name='x')
+        self.x_ = tf.placeholder(tf.float32, shape=[None, self._input_dim], name='x')
         self.is_training_ = tf.placeholder(tf.bool, name='is_training')
         self.hidden_layers = []
 
@@ -228,11 +225,16 @@ class Saucie():
             if type(self._act_fn) == list: # specify act_fn for each layer
                 act_fn = self._act_fn[i]
             if id_lam[i] != 0.:
-                act_fn = [act_fn, 'softmax']
+                act_fn = 'relu'
             x = self.add_layer(x, in_dim, out_dim, self._batch_norm,
                                layer_name, act_fn, self._use_bias)
             if id_lam[i] != 0.:
                 tf.add_to_collection('id_regularization', x)
+                noise = tf.cond(self.is_training_,
+                        lambda: tf.random_normal(tf.shape(x), mean=0, stddev=0),
+                        lambda: tf.zeros_like(x),
+                        name='noise')
+                x += noise
             if l1_lam[i] != 0.:
                 tf.add_to_collection('l1_regularization', x)
             in_dim = out_dim
@@ -248,15 +250,16 @@ class Saucie():
         x = self.encoder
         for i, out_dim in enumerate(self._encoder_layers[::-1]):
             layer_name = 'layer-{}'.format(i)
+            act_fn = self._d_act_fn if i != 0 else None
             x = self.add_layer(x, in_dim, out_dim, False, layer_name,
-                               self._d_act_fn, self._use_bias)
+                               act_fn, self._use_bias)
             in_dim = out_dim
         layer_name = 'reconstructed'
         out_dim = self._input_dim
         if self._loss_fn == 'bce':
             act_fn = 'sigmoid'
         else:
-            act_fn = 'relu'
+            act_fn = self._d_act_fn
         reconstructed_ = self.add_layer(x, in_dim, out_dim, False, layer_name, act_fn,
                                         self._use_bias)
         return reconstructed_
@@ -282,7 +285,7 @@ class Saucie():
             with tf.name_scope('id_reg'):
                 for act_idx, layer_idx in enumerate(id_lam.nonzero()[0]):
                     lam = id_lam[layer_idx]
-                    act = sparse_acts[act_idx]
+                    act = ACT_FNS['softmax'](sparse_acts[act_idx])
                     id_name = 'id_loss_layer_{}'.format(layer_idx)
                     tf.add_to_collection('id_penalties', utils.id_penalty(act, lam, id_name))
                 id_losses_ = tf.get_collection('id_penalties')
