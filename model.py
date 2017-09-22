@@ -16,11 +16,13 @@ class Layer(object):
 		self.name = name
 		self.batch_norm = batch_norm
 
-	def __call__(self, x):
-		if self.batch_norm:
-			x = bn(x)
+	def __call__(self, x, is_training=True):
+		if self.batch_norm and 'output' not in self.name:
+			reuse = not is_training
+			x = bn(x, is_training=is_training, scope=self.name, reuse=reuse)
 		h = self.activation(tf.matmul(x, self.W) + self.b)
-		h = tf.nn.dropout(h,self.dropout_p)
+		if is_training:
+			h = tf.nn.dropout(h,self.dropout_p)
 		h = tf.identity(h, name='{}_activation'.format(self.name))
 		tf.add_to_collection('activations', h)
 		return h
@@ -30,14 +32,15 @@ class MLP(object):
 		self.args = args
 		self.x = tf.placeholder(tf.float32, shape=[args.batch_size, args.input_dim], name='x')
 		self.y = tf.placeholder(tf.float32, shape=[args.batch_size, args.input_dim], name='y')
+		is_training = tf.placeholder(tf.bool, shape=[], name='is_training')
 		self.learning_rate = tf.placeholder(tf.float32, shape=[], name='learning_rate')
 
 		#########################################################################
 		# ENCODER
 		self.layers_encoder = []
 		input_plus_layers = [args.input_dim] + args.layers
-
-		act_f = lambda x: tf.nn.softmax(tf.nn.relu(x)/.1)
+		# act_f = lambda x: tf.nn.softmax(lrelu(x))
+		act_f = lambda x: tf.nn.relu(x)
 		for i,layer in enumerate(input_plus_layers[:-2]):
 			if i in args.layers_entropy:
 				print("Adding entropy to {}".format(i))
@@ -48,7 +51,7 @@ class MLP(object):
 		# last layer is linear, and fully-connected
 		self.layers_encoder.append(Layer('layer_embedding', input_plus_layers[-2], input_plus_layers[-1], tf.identity, 1., batch_norm=args.batch_norm))
 
-		self.embedded = self.feedforward_encoder(self.x)
+		self.embedded = self.feedforward_encoder(self.x, is_training)
 		if args.add_noise_to_embedding:
 			noise = tf.random_normal(self.embedded.get_shape(), mean=0, stddev=args.add_noise_to_embedding, name='embedding_noise')
 			self.embedded_noisy = self.embedded + tf.identity(noise, name='noisy_embedding')
@@ -69,7 +72,7 @@ class MLP(object):
 			self.layers_decoder.append(l)
 		# last decoder layer is linear and fully-connected
 		if args.loss=='mse':
-			output_act = lrelu #tf.nn.relu
+			output_act = tf.nn.relu
 		elif args.loss=='bce':
 			output_act = tf.nn.sigmoid
 		self.layers_decoder.append(Layer('layer_output', layers_decoder[-2], layers_decoder[-1], output_act, 1., batch_norm=args.batch_norm))
@@ -111,16 +114,18 @@ class MLP(object):
 					elif args.normalization_method=='none':
 						normalized = act
 					normalized = tf.identity(normalized, 'normalized_activations_layer_{}'.format(add_entropy_to))
-					self.loss_entropy += lambda_entropy*tf.reduce_sum(-normalized*tf.log(normalized+1e-9) - (1-normalized)*tf.log(1-normalized+1e-9))
+					self.loss_entropy += lambda_entropy*tf.reduce_sum(-normalized*tf.log(normalized+1e-9))
+
 		self.loss_entropy = tf.identity(self.loss_entropy, name='loss_entropy')
 
 		# l2 regularization
 		# self.loss_reg = tf.identity(args.lambda_l2*sum([tf.nn.l2_loss(tv) for tv in tf.global_variables() if 'W_' in tv.name]), name='loss_reg')
-		self.loss_reg = tf.identity(args.lambda_l1*tf.reduce_mean([tf.reduce_mean(tf.abs(tv)) for tv in tf.global_variables()]), name='loss_l1')
-		self.loss_reg += tf.identity(args.lambda_l2*tf.reduce_mean([tf.reduce_mean(tf.nn.l2_loss(tv)) for tv in tf.global_variables()]), name='loss_reg')
+		loss_l1 = tf.identity(args.lambda_l1*tf.reduce_mean([tf.reduce_mean(tf.abs(tv)) for tv in tf.global_variables()]), name='loss_l1')
+		loss_l2 = tf.identity(args.lambda_l2*tf.reduce_mean([tf.reduce_mean(tf.nn.l2_loss(tv)) for tv in tf.global_variables()]), name='loss_l2')
+		loss_reg = loss_l1 + loss_l2
 
 		# total loss
-		self.loss = self.loss_recon + self.loss_sparse + self.loss_reg + self.loss_entropy
+		self.loss = self.loss_recon + self.loss_sparse + loss_reg + self.loss_entropy
 		self.loss = tf.identity(self.loss, name='loss')
 		#########################################################################
 
@@ -131,19 +136,31 @@ class MLP(object):
 		self.train_op = opt.minimize(self.loss, name='train_op')
 		#########################################################################
 
-	def feedforward_encoder(self, x):
+
+		self.decode_embedding()
+
+	def feedforward_encoder(self, x, is_training):
 		for i,l in enumerate(self.layers_encoder):
 			print(x)
 			x = l(x)
+			if i==0:
+				noise = tf.cond(is_training,
+					lambda: tf.random_normal(x.get_shape(), mean=0,  stddev=1),
+					lambda: tf.zeros(x.get_shape()))
+				x += noise
 		return x
 
-	def feedforward_decoder(self, x):
+	def feedforward_decoder(self, x, is_training=True):
 		for i,l in enumerate(self.layers_decoder):
 			print(x)
-			x = l(x)
+			x = l(x, is_training=is_training)
 		print(x)
 		return x
 
-	def write_graph(self, sess):
-		writer = tf.summary.FileWriter(logdir=self.args.save_folder, graph=sess.graph)
-		writer.flush()
+	def decode_embedding(self):
+		e = tf.placeholder(tf.float32, [1, self.args.layers[-1]], name='ph_embedding')
+		out = self.feedforward_decoder(e, is_training=False)
+		out = tf.identity(out, 'ph_embedding_decoded')
+
+		return out
+
