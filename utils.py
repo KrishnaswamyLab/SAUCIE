@@ -26,21 +26,21 @@ def plot_mnist(args, X, y, X_embedded, name, min_dist=15.):
 	plt.subplots_adjust(left=0.0, bottom=0.0, right=1.0, top=0.9, wspace=0.0, hspace=0.0)
 	ax.scatter(X_embedded[:, 0], X_embedded[:, 1], c=y)
 
-	if min_dist is not None:
-		for i in range(10):
-			for d in range(10):
-				shown_images = np.array([[15., 15.]])
-				# indices = np.arange(X_embedded.shape[0])
-				# np.random.shuffle(indices)
-				# for i in indices[:5000]:
-				dist = np.sum((X_embedded[y==d][i] - shown_images) ** 2, 1)
-				if np.min(dist) < min_dist:
-					continue
-				shown_images = np.r_[shown_images, [X_embedded[y==d][i]]]
-				imagebox = offsetbox.AnnotationBbox( 
-					offsetbox.OffsetImage(X[y==d][i].reshape(28, 28), cmap=cm.gray_r), X_embedded[y==d][i]
-					)
-				ax.add_artist(imagebox)
+	shown_images = np.array([[15., 15.]])
+	for i in range(1000):
+		for d in range(10):
+			if i >= X_embedded[y==d].shape[0]: continue
+
+			dist = np.sum((X_embedded[y==d][i] - shown_images) ** 2, 1)
+			if np.min(dist) < min_dist:
+				continue
+			img = X_embedded[y==d][i]
+			shown_images = np.concatenate([shown_images,img.reshape((1,-1))])
+
+			imagebox = offsetbox.AnnotationBbox( 
+				offsetbox.OffsetImage(X[y==d][i].reshape(28, 28), cmap=cm.gray_r), X_embedded[y==d][i]
+				)
+			ax.add_artist(imagebox)
 	fig.savefig(args.save_folder+'/embed_w_images'+name)
 
 
@@ -57,15 +57,15 @@ def silence():
     sys.stdout = save_stdout
 
 
-def show_result(batch_res, fname, grid_size=(8, 8), grid_pad=5):
+def show_result(args, data, fname, grid_size=(8, 8), grid_pad=5):
 	img_height = 28
 	img_width = 28
-	batch_res = batch_res.reshape((batch_res.shape[0], img_height, img_width))
-	img_h, img_w = batch_res.shape[1], batch_res.shape[2]
+	data = data.reshape((data.shape[0], img_height, img_width))
+	img_h, img_w = data.shape[1], data.shape[2]
 	grid_h = img_h * grid_size[0] + grid_pad * (grid_size[0] - 1)
 	grid_w = img_w * grid_size[1] + grid_pad * (grid_size[1] - 1)
 	img_grid = np.zeros((grid_h, grid_w), dtype=np.uint8)
-	for i, res in enumerate(batch_res):
+	for i, res in enumerate(data):
 		if i >= grid_size[0] * grid_size[1]:
 			break
 		img = (res) * 255
@@ -73,7 +73,7 @@ def show_result(batch_res, fname, grid_size=(8, 8), grid_pad=5):
 		row = (i // grid_size[0]) * (img_h + grid_pad)
 		col = (i % grid_size[1]) * (img_w + grid_pad)
 		img_grid[row:row + img_h, col:col + img_w] = img
-	imsave(fname, img_grid)
+	imsave(os.path.join(args.save_folder, fname), img_grid)
 
 def lrelu(x, leak=0.2, name="lrelu"):
 
@@ -112,7 +112,7 @@ def get_layer(sess, loader, name, test_or_train='test'):
 	labels = []
 	for batch, batch_labels in loader.iter_batches(test_or_train):
 		
-		feed = {tbn('x:0'):batch}
+		feed = {tbn('x:0'):batch, tbn('is_training:0'):False}
 		[act] = sess.run([tensor], feed_dict=feed)
 
 		layer.append(act)
@@ -127,10 +127,8 @@ def plot(args, data, labels, title, fn):
 	ax.set_title(title)
 
 	if data.shape[1]>2:
-		# pca = PCA(2)
+		return 
 		tsne = TSNE(verbose=2)
-		# data = data[:500,:]
-		# labels = labels[:500]
 		data = tsne.fit_transform(data)
 
 	colors = [plt.cm.jet(float(i)/len(np.unique(labels))) for i in range(len(np.unique(labels)))]
@@ -138,7 +136,7 @@ def plot(args, data, labels, title, fn):
 		inds = [True if l==lab else False for l in labels]
 		tmp_data = data[inds,:]
 
-		ax.scatter(tmp_data[:,0], tmp_data[:,1], c=colors[int(index)], alpha=.3, s=12, marker='${}$'.format(index), label=int(lab))
+		ax.scatter(tmp_data[:,0], tmp_data[:,1], c=colors[int(index)], alpha=.2, s=12, marker='${}$'.format(index), label=int(lab))
 
 	lgnd = plt.legend(scatterpoints=1, prop={'size':6})
 	for lh in lgnd.legendHandles:
@@ -150,7 +148,7 @@ def plot(args, data, labels, title, fn):
 	plt.close('all')
 	print("Plot saved to {}".format(fn))
 
-def activations_heatmap(args, sess, loader, layer):
+def activations_heatmap(args, sess, loader, layer, thresh=.5):
 	all_acts, all_labels = get_layer(sess, loader, 'layer_encoder_{}_activation:0'.format(layer))
 
 	
@@ -158,20 +156,23 @@ def activations_heatmap(args, sess, loader, layer):
 
 	acts_normalized, labels = get_layer(sess, loader, 'normalized_activations_layer_{}:0'.format(layer))
 
-	binarized = np.where(acts_normalized>.5, 1, 0)
 	normalized_nonzero = acts_normalized.reshape((-1))[acts_normalized.reshape((-1)) > 0]
+	# normalized_nonzero = normalized_nonzero.reshape((-1))[normalized_nonzero.reshape((-1)) < .1]
 
+	# print(normalized_nonzero)
 	fig, (ax1,ax2) = plt.subplots(1,2, figsize=(20,10))
-	ax1.set_title('Nonzero first layer activations (entropy reg)')
-	ax1.set_xlabel('Activation')
+	ax1.set_title('Unnormalized')
+	ax1.set_xlabel('Log-Activation')
 	ax1.set_ylabel('Count')
-	ax1.hist(nonzero, bins=100)
-	ax2.set_title('Nonzero first layer activations (entropy reg) normalized')
-	ax2.hist(normalized_nonzero, bins=100)
+	ax1.hist(np.log(nonzero), bins=1000)
+	ax2.set_title('Normalized')
+	ax2.set_xlabel('Activation')
+	ax2.set_ylabel('Count')
+	ax2.hist(np.log(normalized_nonzero), bins=1000)
 	fig.savefig(os.path.join(args.save_folder, 'layer_{}_activations_histogram'.format(layer)))
 
-	
 
+	binarized = np.where(acts_normalized>thresh, 1, 0)
 	fig, axes = plt.subplots(10,10, figsize=(20,20), dpi=150)
 	fig.subplots_adjust(hspace=.01, wspace=.02, left=.02, right=1, top=1, bottom=0)
 	all_argmaxes = np.zeros((10,10))
@@ -204,7 +205,8 @@ def calculate_loss(sess, loader, train_or_test='test'):
 	losses = []
 	for batch, batch_labels in loader.iter_batches(train_or_test):
 		feed = {x_tensor:batch,
-				y_tensor:batch}
+				y_tensor:batch,
+				tbn('is_training:0'):False}
 		[l] = sess.run([loss_tensor], feed_dict=feed)
 		losses.append(l)
 
@@ -218,6 +220,8 @@ def count_clusters(args, sess, loader, layer, thresh=.5, return_clusters=False):
 	# print(acts.argmax(axis=1)[:5])
 	print(acts.max(axis=1)[:5])
 	binarized = np.where(acts>thresh, 1, 0)
+
+
 	unique_rows = np.vstack({tuple(row) for row in binarized})
 	num_clusters = unique_rows.shape[0]
 
@@ -261,4 +265,43 @@ def calculate_confusion_matrix(true_labels, clusters):
 	table = pd.crosstab(true_labels, clusters)
 
 	return table
+
+def decode_cluster_means(args, sess, loader, layer, cluster_labels):
+	embedded, labels = get_layer(sess, loader, 'layer_embedding_activation:0', 'test')
+
+	df = pd.DataFrame(embedded)
+	df['cluster'] = cluster_labels
+	grouped = df.groupby('cluster')
+	applied = grouped.apply(lambda x: x.mean())
+
+	e = tbn('ph_embedding:0')
+	o = tbn('ph_embedding_decoded:0')
+
+	fig, ax = plt.subplots(1,1)
+	all_clusts = []
+	del applied['cluster']
+	for i,clust in applied.iterrows():
+		clust = clust.values.reshape((1,-1))
+		[decoded] = sess.run([o], feed_dict={e:clust, tbn('is_training:0'):False})
+		all_clusts.append(decoded.reshape((1,-1)))
+
+	all_clusts = np.concatenate(all_clusts, axis=0)
+	all_clusts = all_clusts[:100,:]
+	g = math.ceil(math.sqrt(all_clusts.shape[0]))
+
+	show_result(args, all_clusts, 'cluster_means_decoded.png', grid_size=(g,g))
+
+def confusion_matrix(args, sess, loader, layer, clusters):
+	input_layer, labels = get_layer(sess, loader, 'x:0')
+
+	table = calculate_confusion_matrix(labels, clusters)
+	table = table / table.sum(axis=0)
+	table = table.transpose()
+	table['amax'] = table.idxmax(axis=1)
+	table = table.sort_values('amax')
+	del table['amax']
+	table = table.transpose()
+	fig, ax = plt.subplots(1,1)
+	ax.imshow(table.as_matrix(), cmap='jet')
+	fig.savefig(args.save_folder + '/confusion_matrix_{}.png'.format(layer))
 

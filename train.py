@@ -14,9 +14,9 @@ def parse_args():
 
 
 	# NAME
-	parser.add_argument('--save_folder', type=str, default='saved_flu')
-	parser.add_argument('--data', type=str, default='FLU')
-	parser.add_argument('--data_folder', type=str, default='/data/krishnan/flu_data/CD4/IMG 161974 CD4T.csv')
+	parser.add_argument('--save_folder', type=str, default='saved_noisy_2d')
+	parser.add_argument('--data', type=str, default='MNIST')
+	parser.add_argument('--data_folder', type=str, default='/data/krishnan/flu_data/CD8/IMG 161974 CD8T.csv')
 
 	# TRAINING PARAMETERS
 	parser.add_argument('--batch_size', type=int, default=100)
@@ -27,7 +27,7 @@ def parse_args():
 	parser.add_argument('--max_iterations', type=int, default=10000)
 	
 	# MODEL ARCHITECTURE
-	parser.add_argument('--layers', type=str, default='1024,512,256,2')
+	parser.add_argument('--layers', type=str, default='1024,512,256,10')
 	# parser.add_argument('--layers', type=str, default='128,64,32,2') # make it faster while testing
 	parser.add_argument('--activation', type=str, default='tanh')
 	parser.add_argument('--loss', type=str, default='bce')
@@ -38,10 +38,10 @@ def parse_args():
 	parser.add_argument('--lambda_l1', type=float, default=0)
 	parser.add_argument('--lambda_l2', type=float, default=0)
 	parser.add_argument('--layers_sparsity', type=str, default='')
-	parser.add_argument('--lambda_sparsity', type=float, default=0)
-	parser.add_argument('--layers_entropy', type=str, default='')
-	parser.add_argument('--lambdas_entropy', type=str, default='.001')
-	parser.add_argument('--normalization_method', type=str, default='none')
+	parser.add_argument('--lambda_sparsity', type=float, default='0')
+	parser.add_argument('--layers_entropy', type=str, default='0')
+	parser.add_argument('--lambdas_entropy', type=str, default='.01')
+	parser.add_argument('--normalization_method', type=str, default='softmax')
 	parser.add_argument('--thresh', type=float, default=.5)
 	parser.add_argument('--sigma', type=float, default=.5)
 
@@ -108,19 +108,21 @@ def train(args):
 	loader = get_loader(args)
 	mlp = MLP(args)
 
+	reconstruction_losses = []
 	# initialize
-	with tf.Session() as sess:
+	gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction=0.10)
+	sess = tf.Session(config=tf.ConfigProto(gpu_options=gpu_options)) 
+	with sess:
 		saver = run_inits(args, sess, mlp)
-		#mlp.write_graph(sess)
 
 		iteration = 1
-		losses = [tbn('loss:0'), tbn('loss_recon:0'), tbn('loss_reg:0'), tbn('loss_sparse:0'), tbn('loss_entropy:0')]
+		losses = [tbn('loss:0'), tbn('loss_recon:0'), tbn('loss_sparse:0'), tbn('loss_entropy:0')]
 		for epoch in range(args.num_epochs):
 			t = time.time()
 			for batch, batch_labels in loader.iter_batches('train'):
 				iteration+=1
 
-				x = batch
+				x = batch.copy()
 				if args.add_noise:
 					x = batch + np.random.normal(0,args.add_noise, batch.shape)
 					x = np.maximum(np.minimum(x, 1.), 0.)
@@ -129,19 +131,32 @@ def train(args):
 
 				feed = {mlp.x:x,
 						mlp.y:batch,
+						tbn('is_training:0'):1,
 						mlp.learning_rate:args.learning_rate}
 
-				[l,lrec,lreg,lspa,le, _] = sess.run(losses + [obn('train_op')], feed_dict=feed)
+				[l,lrec,lspa,le, _] = sess.run(losses + [obn('train_op')], feed_dict=feed)
+
+				reconstruction_losses.append(lrec)
 
 
 				# print score on test set				
 				if iteration%args.print_every==0:
-					print("epoch/iter: {}/{} loss: {:.3f} ({:.3f} {:.3f} {:.3f} {:.3f}) time: {:.1f}".format(epoch,
-						iteration, l, lrec, lreg, lspa, le, time.time() - t))
+					print("epoch/iter: {}/{} loss: {:.3f} ({:.3f} {:.3f} {:.3f}) time: {:.1f}".format(epoch,
+						iteration, l, lrec, lspa, le, time.time() - t))
 					t = time.time()
 					
 				# save
 				if args.save_every and iteration%args.save_every==0:
+					fig, ax = plt.subplots(1,1)
+					ax.plot(range(len(reconstruction_losses)), reconstruction_losses)
+					ax.set_xlabel('Iteration')
+					ax.set_ylabel('Reconstruction loss')
+					if args.layers_entropy:
+						title = 'ID reg: {:.3f}'.format(args.lambdas_entropy[0])
+					else:
+						title = 'No ID reg'
+					ax.set_title(title)
+					fig.savefig(os.path.join(args.save_folder, 'reconstruction_loss'))
 					save(args, sess, mlp, saver, loader, iteration)
 
 					embeddings, labels = get_layer(sess, loader, 'layer_embedding_activation:0')
@@ -149,14 +164,14 @@ def train(args):
 					reconstruction, labels = get_layer(sess, loader, 'layer_output_activation:0')
 
 					
+					plot(args, embeddings, labels, 'Embedding layer by label', 'embedding_by_label')
 					if args.layers[-1]==2:
-						plot(args, embeddings, labels, 'Embedding layer by label', 'embedding_by_label')
 						if args.data=='MNIST':
 							plot_mnist(args, input_layer, labels, embeddings, 'orig')
 							plot_mnist(args, reconstruction, labels, embeddings, 'recon')
 					if args.data=='MNIST':
-						show_result(input_layer, args.save_folder+'/original_images.png')
-						show_result(reconstruction, args.save_folder+'/reconstructed_images.png')
+						show_result(args, input_layer, 'original_images.png')
+						show_result(args, reconstruction, 'reconstructed_images.png')
 					if args.dropout_input or args.add_noise:
 						input_layer_noisy = input_layer
 						if args.add_noise:
@@ -165,7 +180,7 @@ def train(args):
 						if args.dropout_input:
 							input_layer_noisy *= np.random.binomial(1,args.dropout_input, input_layer_noisy.shape)
 						if args.data=='MNIST':
-							show_result(input_layer_noisy, args.save_folder+'/original_images_noisy.png')
+							show_result(args, input_layer_noisy, 'original_images_noisy.png')
 					
 
 					# modularity = calculate_modularity(normalized, labels, args.sigma)
@@ -179,19 +194,10 @@ def train(args):
 						count, clusters = count_clusters(args, sess, loader, l, thresh=args.thresh, return_clusters=True)
 						plot(args, embeddings, clusters, 'Embedding layer by cluster', 'embedding_by_cluster_{}'.format(l))
 						print("entropy lambdas: {} Number of clusters: {}".format(args.lambdas_entropy, count))
-						# table = calculate_confusion_matrix(labels, clusters)
-						# table = table / table.sum(axis=0)
-						# table = table.transpose()
-						# table['amax'] = table.idxmax(axis=1)
-						# table = table.sort_values('amax')
-						# del table['amax']
-						# table = table.transpose()
-						# fig, ax = plt.subplots(1,1)
-						# ax.imshow(table.as_matrix(), cmap='jet')
-						# fig.savefig(args.save_folder + '/confusion_matrix_{}.png'.format(l))
-						# activations_heatmap(args, sess, loader, l)
+						decode_cluster_means(args, sess, loader, l, clusters)
+						activations_heatmap(args, sess, loader, l)
+						confusion_matrix(args, sess, loader, l, clusters)
 
-						# savemat(args.save_folder+'/test_data.mat', {'true_labels':labels, 'clusters':clusters, 'embedding': embeddings})
 					plt.close('all')
 
 			# after each epoch potentiall break out
