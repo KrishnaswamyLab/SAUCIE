@@ -21,7 +21,7 @@ from saucie import Saucie
 from tensorflow.python import debug as tf_debug
 
 # DATA FLAGS
-tf.flags.DEFINE_string('dataset', 'zika', 'name of dataset')
+tf.flags.DEFINE_string('dataset', 'mnist', 'name of dataset')
 tf.flags.DEFINE_string('data_path', '/data/krishnan/mnist/mnist_data.npz',
                        'path to npz (utils.DataSet object) or csv file(s)')
 tf.flags.DEFINE_string('labels', None, 'path to labels file if exists')
@@ -36,23 +36,24 @@ tf.flags.DEFINE_string('encoder_layers', '1024,512,256', 'comma-separated list o
 tf.flags.DEFINE_integer('emb_dim', 2, 'shape of bottle-neck layer')
 tf.flags.DEFINE_string('act_fn', 'tanh', 'name of activation function used in encoder')
 tf.flags.DEFINE_string('d_act_fn', 'tanh', 'name of activation function used in decoder')
-tf.flags.DEFINE_string('id_lam', '1e-3,0,0', 'comma-separated list of id regularization scaling coefficients for each encoder layer')
+tf.flags.DEFINE_string('id_lam', '10,0,0', 'comma-separated list of id regularization scaling coefficients for each encoder layer')
 tf.flags.DEFINE_string('l1_lam', '0,0,0', 'comma-separated list of l1 activity regularization scaling coefficients for each encoder layer')
 tf.flags.DEFINE_boolean('use_bias', True, 'boolean for whether or not to use bias')
 tf.flags.DEFINE_string('loss_fn', 'bce', 'type of reconstruction loss to use. Options are: mse, bce')
 tf.flags.DEFINE_string('opt_method', 'adam', 'name of optimizer to use during training')
 tf.flags.DEFINE_float('lr', 1e-3, 'optimizer learning rate')
-tf.flags.DEFINE_boolean('batch_norm', False, 'bool to decide whether to use batch normalization between encoder layers')
+tf.flags.DEFINE_boolean('batch_norm', True, 'bool to decide whether to use batch normalization between encoder layers')
 
 # TRAINING FLAGS
 tf.flags.DEFINE_integer('batch_size', 100, 'size of batch during training')
-tf.flags.DEFINE_integer('num_epochs', 100, 'number of epochs to train')
-tf.flags.DEFINE_integer('patience', 20, 'number of epochs to train without improvement, early stopping')
+tf.flags.DEFINE_integer('num_epochs', 20, 'number of epochs to train')
+tf.flags.DEFINE_integer('patience', 5, 'number of epochs to train without improvement, early stopping')
 tf.flags.DEFINE_integer('log_every', 100, 'training loss logging frequency') 
-tf.flags.DEFINE_integer('save_every', 1000, 'checkpointing frequency') 
+tf.flags.DEFINE_integer('save_every', 200, 'checkpointing frequency') 
 tf.flags.DEFINE_boolean('tb_graph', True, 'whether to log graph to TensorBoard') 
 tf.flags.DEFINE_boolean('tb_summs', True, 'whether to log summaries to TensorBoard') 
 tf.flags.DEFINE_boolean('debug', False, 'enable debugging')
+tf.flags.DEFINE_boolean('verbose', False, 'will log in debug mode if True')
 tf.flags.DEFINE_float('gpu_mem', 0.45, 'percent of gpu mem to allocate')
 
 # PLOTTING FLAGS
@@ -68,56 +69,30 @@ def main(_):
     FLAGS.id_lam = np.array([np.float32(x) for x in FLAGS.id_lam.split(',')])
     FLAGS.l1_lam = np.array([np.float32(x) for x in FLAGS.l1_lam.split(',')])
     print('id_lam: {}, l1_lam: {}'.format(FLAGS.id_lam, FLAGS.l1_lam))
-    data = load_dataset()
+    data = utils.load_dataset(FLAGS.data_path, FLAGS.labels, FLAGS.colnames,
+                              FLAGS.markers, FLAGS.keep_cols)
     gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction=FLAGS.gpu_mem)
     sess = tf.Session(config=tf.ConfigProto(gpu_options=gpu_options))
-    if FLAGS.debug:
-        sess = tf_debug.LocalCLIDebugWrapperSession(sess)
-        sess.add_tensor_filter('has_inf_or_nan', tf_debug.has_inf_or_nan)
+
+    if FLAGS.verbose:
         tf.logging.set_verbosity(tf.logging.DEBUG)
     else:
         tf.logging.set_verbosity(tf.logging.INFO)
+    if FLAGS.debug:
+        sess = tf_debug.LocalCLIDebugWrapperSession(sess)
+        sess.add_tensor_filter('has_inf_or_nan', tf_debug.has_inf_or_nan)
+
     if FLAGS.model_config:
         model = saucie.load_model_from_config(FLAGS.dataset, FLAGS.model_config)
     else:
         config = saucie.make_config(FLAGS)
-        config['input_dim'] = data.data.shape[1]
         model = Saucie(**config)
+
     model.build(sess)
     steps_per_epoch = data.num_samples // FLAGS.batch_size
     num_steps = steps_per_epoch * FLAGS.num_epochs
     train(model, sess, data, FLAGS.batch_size, num_steps, FLAGS.thresh, FLAGS.patience,
           FLAGS.log_every, FLAGS.save_every, FLAGS.save_plots)
-
-
-def load_dataset():
-    if FLAGS.data_path.split('.')[-1] == 'npz':
-        data = utils.DataSet.load(FLAGS.data_path)
-    elif FLAGS.data_path.split('.')[-1] == 'csv':
-        if len(glob.glob(FLAGS.data_path)) > 1:
-            FLAGS.data_path = glob.glob(FLAGS.data_path)
-        if FLAGS.labels:
-            if len(glob.glob(FLAGS.labels)) > 1:
-                FLAGS.labels = glob.glob(FLAGS.labels_file)
-            elif FLAGS.labels.isdigit():
-                FLAGS.labels = int(FLAGS.labels)
-        header = 0 if FLAGS.dataset == 'zika' else None
-        data = utils.load_dataset_from_csv(FLAGS.data_path, header=header,
-                                           labels=FLAGS.labels,
-                                           colnames=FLAGS.colnames,
-                                           markers=FLAGS.markers,
-                                           keep_cols=FLAGS.keep_cols)
-        if FLAGS.dataset in ['flu', 'zika']:
-            data._data = np.arcsinh(data._data / 5, dtype=np.float32)
-            data._test_data = np.arcsinh(data._test_data / 5, dtype=np.float32)
-            data._data = data._data / data._data.max()
-            data._test_data = data._test_data / data._data.max()
-        if type(FLAGS.data_path) == str:
-            data_path = FLAGS.data_path[:-4] + '.npz'
-        else:
-            data_path = os.path.split(FLAGS.data_path[0])[0] + '/combined.npz'
-        data.save(data_path)
-    return data
 
 
 def train(model, sess, data, batch_size, num_steps, thresh=0.5, patience=None,
@@ -168,7 +143,7 @@ def train(model, sess, data, batch_size, num_steps, thresh=0.5, patience=None,
         if not os.path.exists(plot_folder):
             os.makedirs(plot_folder)
         plot_ops = OrderedDict(emb=model.encoder)
-        plot_ops['cluster_acts'] = [model.hidden_layers[i].act_ for i in cluster_layers]
+        plot_ops['cluster_acts'] = tf.get_collection('id_normalized_activations')
 
     for step in range(current_step + 1, num_steps + 1):
         batch = data.next_batch(batch_size)
@@ -180,7 +155,7 @@ def train(model, sess, data, batch_size, num_steps, thresh=0.5, patience=None,
         if 'loss_summs' in train_dict:
             summ = train_dict['loss_summs']
             train_writer.add_summary(summ, step)
-        log_str = (' epoch {}, step {}: '.format(model.epochs_trained, step)
+        log_str = ('epoch/step: {}/{}, '.format(model.epochs_trained, step)
                    + utils.make_dict_str(train_losses))
         tf.logging.log_first_n(tf.logging.INFO, log_str, log_freq - 1)
         tf.logging.log_every_n(tf.logging.INFO, log_str, log_freq)
@@ -189,8 +164,8 @@ def train(model, sess, data, batch_size, num_steps, thresh=0.5, patience=None,
             tf.logging.info('Saving model, after step {}'.format(step))
             model.save_model(sess, 'model', step=step)
             if save_plots:
-                tf.logging.info('Plotting middle layer embedding')
-                plot_dict = sess.run(plot_ops, feed_dict=test_feed_dict)
+                tf.logging.debug('Plotting middle layer embedding')
+                plot_dict = sess.run(plot_ops, feed_dict=feed_dict)
                 make_plots(cluster_layers, id_lam, l1_lam, plot_folder, plot_dict, data, 'cluster_layer-{}.png')
 
         if model.epochs_trained != data.epochs_trained:
@@ -200,7 +175,7 @@ def train(model, sess, data, batch_size, num_steps, thresh=0.5, patience=None,
             if 'loss_summs' in test_dict:
                 summ = test_dict['loss_summs']
                 test_writer.add_summary(summ, step)
-            log_str = (' TESTING -- epoch {}: '.format(model.epochs_trained)
+            log_str = ('TESTING -- epoch: {}, '.format(model.epochs_trained)
                        + utils.make_dict_str(test_losses))
             tf.logging.info(log_str)
             if best_test_losses is None or best_test_losses['loss'] > test_losses['loss']:
@@ -209,7 +184,7 @@ def train(model, sess, data, batch_size, num_steps, thresh=0.5, patience=None,
                 best_test_losses = test_losses
                 epochs_since_improved = 0
                 if save_plots:
-                    tf.logging.info('Plotting best middle layer embedding')
+                    tf.logging.debug('Plotting best middle layer embedding')
                     plot_dict = sess.run(plot_ops, feed_dict=test_feed_dict)
                     make_plots(cluster_layers, id_lam, l1_lam, plot_folder, plot_dict, data, 'best-cluster_layer-{}.png')
             else:
@@ -232,9 +207,13 @@ def make_plots(cluster_layers, id_lam, l1_lam, plot_folder, plot_dict, data, tit
         save_file = plot_folder + '/emb-' + title_fmt.format(hl_idx)
         title = 'Embedding, clustered layer-{}, id_lam/l1_lam={:5.4E}/{:5.4E}'.format(hl_idx, id_lam[hl_idx], l1_lam[hl_idx])
         clusts = utils.binarize(acts, FLAGS.thresh)
+        tf.logging.debug('Top 5 activated neurons: {}'.format(acts.max(axis=1)[:5]))
+        tf.logging.debug('Mean max activation: {}'.format(acts.max(axis=1).mean()))
+        tf.logging.debug('Bottom 5 max activated neurons: {}'.format(acts.max(axis=1)[-5:]))
         plotting.plot_embedding2D(plot_dict['emb'], clusts, save_file, title)
-        save_file = plot_folder + '/heatmap-' + title_fmt.format(hl_idx)
-        plotting.plot_cluster_heatmap(data.test_data, clusts, data._colnames, data._markers, save_file)
+        if '_colnames' in data.__dict__:
+            save_file = plot_folder + '/heatmap-' + title_fmt.format(hl_idx)
+            plotting.plot_cluster_heatmap(data.test_data, clusts, data._colnames, data._markers, save_file)
     if cluster_layers == []:
         plotting.plot_embedding2D(plot_dict['emb'], np.zeros(len(plot_dict['emb'])), plot_folder + '/emb.png','Embedding, no clusters')
 

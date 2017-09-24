@@ -15,4 +15,4 @@
 *.swp
 saucie_models
 checkpoint
-
+.ipynb_checkpoints/

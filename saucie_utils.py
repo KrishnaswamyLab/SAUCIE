@@ -9,6 +9,7 @@ Utils for SAUCIE
 """
 import numpy as np
 import pandas as pd
+import glob
 import tensorflow as tf
 
 from sklearn.preprocessing import LabelEncoder
@@ -47,7 +48,7 @@ def binary_crossentropy(predicted, actual, name='binary_crossentropy_error'):
 
 
 def binarize(acts, thresh=.5):
-    binarized = np.greater(acts, thresh).astype(int)
+    binarized = np.where(acts>thresh, 1, 0)
     unique_rows = np.vstack({tuple(row) for row in binarized})
     num_clusters = unique_rows.shape[0]
     new_labels = np.zeros(acts.shape[0])
@@ -62,7 +63,7 @@ def binarize(acts, thresh=.5):
 
 # information dimension regularization penalty
 def id_penalty(act, lam, name='id_loss'):
-    return tf.multiply(lam, -tf.reduce_sum(act * tf.log(act + EPS)), name=name)
+    return tf.multiply(lam, -tf.reduce_mean(act * tf.log(act + EPS)), name=name)
 
 
 def l1_act_penalty(act, lam, name='l1_loss'):
@@ -335,3 +336,33 @@ def load_dataset_from_csv(csv_file, header=None, index_col=None, labels=None,
     dataset = DataSet(**data_dict)
     return dataset
 
+
+def load_dataset(dataset, data_path, labels=None, colnames=None, markers=None,
+                 keep_cols=None):
+    if data_path.split('.')[-1] == 'npz':
+        data = DataSet.load(data_path)
+    elif data_path.split('.')[-1] == 'csv':
+        if len(glob.glob(data_path)) > 1:
+            data_path = glob.glob(data_path)
+        if labels:
+            if len(glob.glob(labels)) > 1:
+                labels = glob.glob(labels)
+            elif labels.isdigit():
+                labels = int(labels)
+        header = 0 if dataset == 'zika' else None
+        data = load_dataset_from_csv(data_path, header=header,
+                                     labels=labels,
+                                     colnames=colnames,
+                                     markers=markers,
+                                     keep_cols=keep_cols)
+        if dataset in ['flu', 'zika']:
+            data._data = np.arcsinh(data._data / 5, dtype=np.float32)
+            data._test_data = np.arcsinh(data._test_data / 5, dtype=np.float32)
+            data._data = data._data / data._data.max()
+            data._test_data = data._test_data / data._data.max()
+        if type(data_path) == str:
+            data_path = data_path[:-4] + '.npz'
+        else:
+            data_path = os.path.split(data_path[0])[0] + '/combined.npz'
+        data.save(data_path)
+    return data

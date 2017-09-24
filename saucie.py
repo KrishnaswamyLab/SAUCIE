@@ -27,7 +27,7 @@ ACT_FNS = {'lrelu': utils.lrelu,
            'sigmoid': tf.nn.sigmoid,
            'tanh': tf.nn.tanh}
 
-SAVE_PATH = '/data/krishnan/saucie_models'
+SAVE_PATH = './saucie_models'
 
 DATETIME_FMT = '%y-%m-%d-runs'
 
@@ -42,26 +42,31 @@ def load_model_from_config(dataset='mnist', config_path=SAVE_PATH+'/best.config'
 
 
 def default_config(dataset='mnist'):
-    sparse_config = utils.SparseLayerConfig(num_layers=3, id_lam=np.array([1e-5,0.,0.]))
-    config = dict(encoder_layers=[1024,512,256], emb_dim=2, act_fn='relu',
-                  d_act_fn='relu', use_bias=True, loss_fn='bce', lr=1e-3,
-                  batch_norm=False, sparse_config=sparse_config)
+    sparse_config = utils.SparseLayerConfig(num_layers=3, id_lam=np.array([1e2,0.,0.]))
     if dataset == 'mnist':
-        config['input_dim'] = 784
-    elif dataset == 'cytof_emt':
-        config['input_dim'] = 30 # or something..
+        input_dim = 784
+    elif dataset == 'zika':
+        input_dim = 40
+    config = OrderedDict(input_dim=input_dim, encoder_layers=[1024,512,256],
+                         emb_dim=2, act_fn='tanh', d_act_fn='tanh', use_bias=True,
+                         loss_fn='bce', opt_method='adam', lr=1e-3, batch_norm=True,
+                         sparse_config=sparse_config,
+                         save_path='{}/{}'.format(SAVE_PATH,dataset))
     return config
 
 
 def make_config(args):
     sparse_config = utils.SparseLayerConfig(num_layers=len(args.id_lam), id_lam=args.id_lam, l1_lam=args.l1_lam)
-    config = dict(encoder_layers=args.encoder_layers, emb_dim=args.emb_dim, act_fn=args.act_fn,
-                  d_act_fn=args.d_act_fn, use_bias=args.use_bias, loss_fn=args.loss_fn, opt_method=args.opt_method,
-                  lr=args.lr, batch_norm=args.batch_norm, sparse_config=sparse_config, save_path=args.model_dir)
     if args.dataset == 'mnist':
-        config['input_dim'] = 784
-    elif args.dataset == 'emt_cytof':
-        config['input_dim'] = 30
+        input_dim = 784
+    elif args.dataset == 'zika':
+        input_dim = 40
+    config = OrderedDict(input_dim=input_dim, encoder_layers=args.encoder_layers,
+                         emb_dim=args.emb_dim, act_fn=args.act_fn,
+                         d_act_fn=args.d_act_fn, use_bias=args.use_bias, loss_fn=args.loss_fn,
+                         opt_method=args.opt_method, lr=args.lr, batch_norm=args.batch_norm,
+                         sparse_config=sparse_config,
+                         save_path='{}/{}'.format(args.model_dir, args.dataset))
     return config
 
 
@@ -97,10 +102,7 @@ class Layer():
                 if self._act_fn:
                     if type(self._act_fn) == list:
                         for act_fn in self._act_fn:
-                            if act_fn != 'softmax' and self._act_fn[-1] == 'softmax':
-                                self.act_ = ACT_FNS[act_fn](self.act_, name='act_{}'.format(act_fn)) / .1
-                            else:
-                                self.act_ = ACT_FNS[act_fn](self.act_, name='act_{}'.format(act_fn))
+                            self.act_ = ACT_FNS[act_fn](self.act_, name='act_{}'.format(act_fn))
                     else:
                         self.act_ = ACT_FNS[self._act_fn](self.act_, name='hidden_rep')
             return self.act_
@@ -228,19 +230,19 @@ class Saucie():
                 act_fn = 'relu'
             x = self.add_layer(x, in_dim, out_dim, self._batch_norm,
                                layer_name, act_fn, self._use_bias)
+            if l1_lam[i] != 0.:
+                tf.add_to_collection('l1_regularization', x)
             if id_lam[i] != 0.:
-                tf.add_to_collection('id_regularization', x)
+                tf.add_to_collection('id_regularization', x) 
                 noise = tf.cond(self.is_training_,
                         lambda: tf.random_normal(tf.shape(x), mean=0, stddev=0),
                         lambda: tf.zeros_like(x),
                         name='noise')
                 x += noise
-            if l1_lam[i] != 0.:
-                tf.add_to_collection('l1_regularization', x)
             in_dim = out_dim
         layer_name = 'embedding'
         out_dim = self._emb_dim
-        encoded_ = self.add_layer(x, in_dim, out_dim, False, layer_name, None,
+        encoded_ = self.add_layer(x, in_dim, out_dim, self._batch_norm, layer_name, None,
                                   self._use_bias)
         return encoded_
 
@@ -251,6 +253,8 @@ class Saucie():
         for i, out_dim in enumerate(self._encoder_layers[::-1]):
             layer_name = 'layer-{}'.format(i)
             act_fn = self._d_act_fn if i != 0 else None
+            if type(self._d_act_fn) == list:
+                act_fn = self._d_act_fn[i]
             x = self.add_layer(x, in_dim, out_dim, False, layer_name,
                                act_fn, self._use_bias)
             in_dim = out_dim
@@ -260,7 +264,7 @@ class Saucie():
             act_fn = 'sigmoid'
         else:
             act_fn = self._d_act_fn
-        reconstructed_ = self.add_layer(x, in_dim, out_dim, False, layer_name, act_fn,
+        reconstructed_ = self.add_layer(x, in_dim, out_dim, self._batch_norm, layer_name, act_fn,
                                         self._use_bias)
         return reconstructed_
 
@@ -285,9 +289,10 @@ class Saucie():
             with tf.name_scope('id_reg'):
                 for act_idx, layer_idx in enumerate(id_lam.nonzero()[0]):
                     lam = id_lam[layer_idx]
-                    act = ACT_FNS['softmax'](sparse_acts[act_idx])
+                    act_ = ACT_FNS['softmax'](sparse_acts[act_idx], name='normalized_act-{}'.format(layer_idx))
                     id_name = 'id_loss_layer_{}'.format(layer_idx)
-                    tf.add_to_collection('id_penalties', utils.id_penalty(act, lam, id_name))
+                    tf.add_to_collection('id_penalties', utils.id_penalty(act_, lam, id_name))
+                    tf.add_to_collection('id_normalized_activations', act_)
                 id_losses_ = tf.get_collection('id_penalties')
                 id_loss_ = tf.reduce_sum(id_losses_, name='id_loss')
                 loss_ += id_loss_
@@ -297,9 +302,9 @@ class Saucie():
             with tf.name_scope('l1_reg'):
                 for act_idx, layer_idx in enumerate(l1_lam.nonzero()[0]):
                     lam = l1_lam[layer_idx]
-                    act = sparse_acts[act_idx]
+                    act_ = sparse_acts[act_idx]
                     l1_name = 'l1_loss_layer_{}'.format(layer_idx)
-                    tf.add_to_collection('l1_penalties', utils.l1_act_penalty(act, lam, l1_name))
+                    tf.add_to_collection('l1_penalties', utils.l1_act_penalty(act_, lam, l1_name))
                 l1_losses_ = tf.get_collection('l1_penalties')
                 l1_loss_ = tf.reduce_sum(l1_losses_, name='l1_loss')
                 loss_ += l1_loss_
