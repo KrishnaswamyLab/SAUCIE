@@ -11,6 +11,7 @@ import numpy as np
 import pandas as pd
 import glob
 import tensorflow as tf
+import os
 
 from sklearn.preprocessing import LabelEncoder
 from sklearn.model_selection import train_test_split
@@ -18,6 +19,7 @@ from typing import NamedTuple
 
 EPS = np.float32(1e-8)
 RAND_SEED = 42
+CYTOF_DATASETS = {'flu', 'zika'}
 
 class SparseLayerConfig(NamedTuple): # NamedTuple('SparseLayerConfig', ['num_layers', 'id_lam', 'l1_lam'])
     num_layers: int = 3
@@ -63,11 +65,11 @@ def binarize(acts, thresh=.5):
 
 # information dimension regularization penalty
 def id_penalty(act, lam, name='id_loss'):
-    return tf.multiply(lam, -tf.reduce_mean(act * tf.log(act + EPS)), name=name)
+    return tf.multiply(lam, -tf.reduce_sum(act * tf.log(act + EPS)), name=name)
 
 
 def l1_act_penalty(act, lam, name='l1_loss'):
-    return tf.multiply(lam, tf.reduce_mean(tf.abs(act)), name=name)
+    return tf.multiply(lam, tf.reduce_sum(tf.abs(act)), name=name)
 
 
 def make_dict_str(d={}, custom_keys=[], subset=[], kv_sep=': ', item_sep=', ',
@@ -83,12 +85,14 @@ def make_dict_str(d={}, custom_keys=[], subset=[], kv_sep=': ', item_sep=', ',
     item_list = []
     for c_key, key in custom_keys:
         item = d[key]
-        if type(item) == float and item < 1e-4:
+        if isinstance(item, (float, np.floating)) and item < 1e-4:
             item = float_format.format(item)
-        elif type(item) == list:
+        elif isinstance(item, (list, np.ndarray)):
             for i,j in enumerate(item):
-                if type(j) == float and j < 1e-4:
+                if isinstance(j, (float, np.floating)) and j < 1e-4:
                     item[i] = float_format.format(j)
+                else:
+                    item[i] = str(item[i])
             item = ','.join(item)
         else:
             item = str(item)
@@ -299,12 +303,12 @@ def load_dataset_from_csv(csv_file, header=None, index_col=None, labels=None,
 
     if colnames:
         if type(colnames) == str:
-            colnames = [x.strip() for x in open(colnames).readlines()]
+            colnames = [x.strip().split('_')[-1] for x in open(colnames).readlines()]
             data_dict['_colnames'] = colnames
         if markers:
             data_dict['_markers'] = None
             if type(markers) == str:
-                markers = [x.strip() for x in open(markers).readlines()]
+                markers = [x.strip().split('_')[-1] for x in open(markers).readlines()]
             if not keep_cols:
                 data = pd.DataFrame(data, columns=colnames)
                 data = data[markers].values
@@ -355,7 +359,7 @@ def load_dataset(dataset, data_path, labels=None, colnames=None, markers=None,
                                      colnames=colnames,
                                      markers=markers,
                                      keep_cols=keep_cols)
-        if dataset in ['flu', 'zika']:
+        if dataset in CYTOF_DATASETS:
             data._data = np.arcsinh(data._data / 5, dtype=np.float32)
             data._test_data = np.arcsinh(data._test_data / 5, dtype=np.float32)
             data._data = data._data / data._data.max()

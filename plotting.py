@@ -30,7 +30,6 @@ def plot_embedding2D(data, clusts, save_file='./plots/emb.png',
             pca = PCA(2)
             data = pca.fit_transform(data)
 
-
     unique_clusts = np.unique(clusts)
     colors = [plt.cm.jet(float(i) / len(unique_clusts))
               for i in range(len(unique_clusts))]

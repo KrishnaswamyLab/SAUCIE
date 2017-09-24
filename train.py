@@ -28,7 +28,7 @@ def parse_args():
 	parser.add_argument('--max_iterations', type=int, default=10000)
 	
 	# MODEL ARCHITECTURE
-	parser.add_argument('--layers', type=str, default='1024,512,256,10')
+	parser.add_argument('--layers', type=str, default='1024,512,256,2')
 	# parser.add_argument('--layers', type=str, default='128,64,32,2') # make it faster while testing
 	parser.add_argument('--activation', type=str, default='tanh')
 	parser.add_argument('--loss', type=str, default='bce')

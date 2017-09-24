@@ -46,7 +46,7 @@ def default_config(dataset='mnist'):
     if dataset == 'mnist':
         input_dim = 784
     elif dataset == 'zika':
-        input_dim = 40
+        input_dim = 35
     config = OrderedDict(input_dim=input_dim, encoder_layers=[1024,512,256],
                          emb_dim=2, act_fn='tanh', d_act_fn='tanh', use_bias=True,
                          loss_fn='bce', opt_method='adam', lr=1e-3, batch_norm=True,
@@ -60,7 +60,7 @@ def make_config(args):
     if args.dataset == 'mnist':
         input_dim = 784
     elif args.dataset == 'zika':
-        input_dim = 40
+        input_dim = 35
     config = OrderedDict(input_dim=input_dim, encoder_layers=args.encoder_layers,
                          emb_dim=args.emb_dim, act_fn=args.act_fn,
                          d_act_fn=args.d_act_fn, use_bias=args.use_bias, loss_fn=args.loss_fn,
