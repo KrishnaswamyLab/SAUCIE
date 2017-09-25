@@ -42,7 +42,7 @@ def load_model_from_config(dataset='mnist', config_path=SAVE_PATH+'/best.config'
 
 
 def default_config(dataset='mnist'):
-    sparse_config = utils.SparseLayerConfig(num_layers=3, id_lam=np.array([1e2,0.,0.]))
+    sparse_config = utils.SparseLayerConfig(num_layers=3, id_lam=np.array([1e2,0.,0.], dtype=np.float32))
     if dataset == 'mnist':
         input_dim = 784
     elif dataset == 'zika':
