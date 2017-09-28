@@ -39,34 +39,50 @@ def plot_embedding2D(data, clusts, save_file='./plots/emb.png',
                    s=12, label=int(clust))
 
     lgnd = ax.legend()
-    """
-    for lh in lgnd.legendHandles:
-        lh._sizes = [30]
-        lh.set_alpha(1)
-    """
 
     fig.savefig(save_file, dpi=300)
     plt.close('all')
 
 
-def plot_cluster_heatmap(data, clusts, colnames, markers=None, save_file='./plots/heatmap.png',
-                         title="Marker vs. Cluster heatmap"):
+def plot_cluster_heatmap(data, clusts, colnames, markers=None, zscore=True,
+                         save_file='./plots/heatmap.png',
+                         title="Marker vs. Cluster Heatmap"):
     data = pd.DataFrame(data, columns=colnames)
     if markers:
         data = data[markers]
         colnames = markers
-    agg = pd.concat([data, pd.DataFrame(dict(cluster=clusts))], axis=1)
-    by_cluster = agg.groupby(['cluster']) 
-    z_scaled_cluster = scale(by_cluster.mean().values, axis=0)
+    data['cluster'] = clusts
+    by_cluster = data.groupby(['cluster']) 
+    scaled = by_cluster
+    if zscore:
+        scaled = scale(scaled.mean().values, axis=0)
     unique, counts = np.unique(clusts, return_counts=True)
     counts = counts / len(clusts) * 100 # computes percentage
     clust_dict = dict(zip(unique, counts))
+    cluster_labels = ['{}: ({}%)'.format(i+1, round(clust_dict[i], 2))
+                      for i in range(len(unique))]
     f = plt.figure(figsize=(18, 10))
-    ax = sns.heatmap(z_scaled_cluster, xticklabels=colnames,
-                     yticklabels=['{}: ({}%)'.format(i+1, round(clust_dict[i], 2))
-                                  for i in range(len(unique))])
-    ax.set_title('Marker vs. Cluster Heatmap', {'fontsize': 20})
+    ax = sns.heatmap(scaled, xticklabels=colnames,
+                     yticklabels=cluster_labels)
+    ax.set_title(title, {'fontsize': 20})
     ax.set_ylabel('Cluster Number', {'fontsize': 15})
     ax.set_xlabel('Marker', {'fontsize': 15})
     f.savefig(save_file, dpi=300)
+    plt.close('all')
+
+def plot_cluster_linkage_heatmap(data, clusts, colnames, markers=None, save_file='./plots/linkage.png',
+                                 title="Marker vs Cluster linkage heatmap"):
+    data = pd.DataFrame(data, columns=colnames)
+    if markers:
+        data = data[markers]
+        colnames = markers
+    data['cluster'] = clusts
+    by_cluster = data.groupby(['cluster'])
+    unique, counts = np.unique(clusts, return_counts=True)
+    counts = counts / len(clusts) * 100 # computes percentage
+    clust_dict = dict(zip(unique, counts))
+    cluster_labels = ['{}: ({}%)'.format(i+1, round(clust_dict[i], 2))
+                      for i in range(len(unique))]
+    cg = sns.clustermap(by_cluster.mean().values.T, z_score=0, yticklabels=colnames, xticklabels=cluster_labels)
+    cg.savefig(save_file, dpi=300)
     plt.close('all')

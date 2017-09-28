@@ -17,23 +17,40 @@ from sklearn.preprocessing import LabelEncoder
 from sklearn.model_selection import train_test_split
 from typing import NamedTuple
 
-EPS = np.float32(1e-8)
 RAND_SEED = 42
 CYTOF_DATASETS = {'flu', 'zika'}
+FLOAT_DTYPE = np.float32
+TF_FLOAT_DTYPE = tf.as_dtype(FLOAT_DTYPE)
+EPS = FLOAT_DTYPE(1e-8)
 
-class SparseLayerConfig(NamedTuple): # NamedTuple('SparseLayerConfig', ['num_layers', 'id_lam', 'l1_lam'])
+# NamedTuple('SparseLayerConfig', ['num_layers', 'id_lam', 'l1_lam', 'l1_w_lam',
+#                                  'l2_w_lam', 'l1_b_lam', 'l2_b_lam'])
+
+class SparseLayerConfig(NamedTuple): 
     num_layers: int = 3
-    id_lam: np.array = np.zeros(num_layers)
-    l1_lam: np.array = np.zeros(num_layers)
-
+    id_lam:   np.array = np.zeros(num_layers, dtype=FLOAT_DTYPE)
+    l1_lam:   np.array = np.zeros(num_layers, dtype=FLOAT_DTYPE)
+    l1_w_lam: np.array = np.zeros(num_layers, dtype=FLOAT_DTYPE)
+    l2_w_lam: np.array = np.zeros(num_layers, dtype=FLOAT_DTYPE)
+    l1_b_lam: np.array = np.zeros(num_layers, dtype=FLOAT_DTYPE)
+    l2_b_lam: np.array = np.zeros(num_layers, dtype=FLOAT_DTYPE)
+    
     def __repr__(self):
-        return 'SparseLayerConfig(id_lam={},l1_lam={})'.format(self.id_lam.tolist(), self.l1_lam.tolist())
+        return ('SparseLayerConfig(id_lam={},l1_lam={},l1_w_lam={},l2_w_lam={},'
+                'l1_b_lam={},l2_b_lam={})'.format(
+                    self.id_lam.tolist(), self.l1_lam.tolist(), self.l1_w_lam.tolist(),
+                    self.l2_w_lam.tolist(), self.l1_b_lam.tolist(), self.l2_b_lam.tolist(), 
+                ))
 
     def __eq__(self, other):
         if isinstance(other, self.__class__):
             return (other.num_layers == self.num_layers and
                     (other.id_lam == self.id_lam).all() and 
-                    (other.l1_lam == self.l1_lam).all())
+                    (other.l1_lam == self.l1_lam).all() and
+                    (other.l1_w_lam == self.l1_w_lam).all() and 
+                    (other.l2_w_lam == self.l2_w_lam).all() and
+                    (other.l1_b_lam == self.l1_b_lam).all() and 
+                    (other.l2_b_lam == self.l2_b_lam).all())
         return False
 
     def __ne__(self, other):
@@ -48,7 +65,6 @@ def binary_crossentropy(predicted, actual, name='binary_crossentropy_error'):
     return -tf.reduce_mean(actual * tf.log(predicted + EPS)
                            + (1 - actual) * tf.log(1 - predicted + EPS), name=name)
 
-
 def binarize(acts, thresh=.5):
     binarized = np.where(acts>thresh, 1, 0)
     unique_rows = np.vstack({tuple(row) for row in binarized})
@@ -59,17 +75,22 @@ def binarize(acts, thresh=.5):
         print('Unique binary clusters: {}'.format(num_clusters))
         for i, row in enumerate(unique_rows[1:]):
             subs = np.where(np.all(binarized == row, axis=1))[0]
-            new_labels[subs] = i
+            new_labels[subs] = i + 1
+        uc, counts = np.unique(new_labels, return_counts=True)
+        print('Cluster counts (greater than 5% of points)')
+        print('\n'.join(['{},{}'.format(x,y) for x,y in zip(uc, counts) if y / len(acts) > .05]))
     return new_labels
 
 
 # information dimension regularization penalty
 def id_penalty(act, lam, name='id_loss'):
-    return tf.multiply(lam, -tf.reduce_sum(act * tf.log(act + EPS)), name=name)
+    return tf.multiply(lam, -tf.reduce_mean(act * tf.log(act + EPS)), name=name)
 
+def l1_penalty(t, lam, name='l1_loss'):
+    return tf.multiply(lam, tf.reduce_sum(tf.abs(t)), name=name)
 
-def l1_act_penalty(act, lam, name='l1_loss'):
-    return tf.multiply(lam, tf.reduce_sum(tf.abs(act)), name=name)
+def l2_penalty(t, lam, name='l2_loss'):
+    return tf.multiply(lam, tf.reduce_sum(tf.sqrt(tf.square(t))), name=name)
 
 
 def make_dict_str(d={}, custom_keys=[], subset=[], kv_sep=': ', item_sep=', ',
@@ -360,8 +381,8 @@ def load_dataset(dataset, data_path, labels=None, colnames=None, markers=None,
                                      markers=markers,
                                      keep_cols=keep_cols)
         if dataset in CYTOF_DATASETS:
-            data._data = np.arcsinh(data._data / 5, dtype=np.float32)
-            data._test_data = np.arcsinh(data._test_data / 5, dtype=np.float32)
+            data._data = np.arcsinh(data._data / 5, dtype=FLOAT_DTYPE)
+            data._test_data = np.arcsinh(data._test_data / 5, dtype=FLOAT_DTYPE)
             data._data = data._data / data._data.max()
             data._test_data = data._test_data / data._data.max()
         if type(data_path) == str:

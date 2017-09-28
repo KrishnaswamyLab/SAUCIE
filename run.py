@@ -36,8 +36,12 @@ tf.flags.DEFINE_string('encoder_layers', '1024,512,256', 'comma-separated list o
 tf.flags.DEFINE_integer('emb_dim', 2, 'shape of bottle-neck layer')
 tf.flags.DEFINE_string('act_fn', 'tanh', 'name of activation function used in encoder')
 tf.flags.DEFINE_string('d_act_fn', 'tanh', 'name of activation function used in decoder')
-tf.flags.DEFINE_string('id_lam', '10,0,0', 'comma-separated list of id regularization scaling coefficients for each encoder layer')
-tf.flags.DEFINE_string('l1_lam', '0,0,0', 'comma-separated list of l1 activity regularization scaling coefficients for each encoder layer')
+tf.flags.DEFINE_string('id_lam', None, 'comma-separated list of id regularization scaling coefficients for each encoder layer')
+tf.flags.DEFINE_string('l1_lam', None, 'comma-separated list of l1 activity regularization scaling coefficients for each encoder layer')
+tf.flags.DEFINE_string('l1_w_lam', None, 'comma-separated list of l1 weight regularization scaling coefficients for each encoder layer')
+tf.flags.DEFINE_string('l2_w_lam', None, 'comma-separated list of l2 weight regularization scaling coefficients for each encoder layer')
+tf.flags.DEFINE_string('l1_b_lam', None, 'comma-separated list of l1 bias regularization scaling coefficients for each encoder layer')
+tf.flags.DEFINE_string('l2_b_lam', None, 'comma-separated list of l2 bias regularization scaling coefficients for each encoder layer')
 tf.flags.DEFINE_boolean('use_bias', True, 'boolean for whether or not to use bias')
 tf.flags.DEFINE_string('loss_fn', 'bce', 'type of reconstruction loss to use. Options are: mse, bce')
 tf.flags.DEFINE_string('opt_method', 'adam', 'name of optimizer to use during training')
@@ -45,13 +49,13 @@ tf.flags.DEFINE_float('lr', 1e-3, 'optimizer learning rate')
 tf.flags.DEFINE_boolean('batch_norm', True, 'bool to decide whether to use batch normalization between encoder layers')
 
 # TRAINING FLAGS
-tf.flags.DEFINE_integer('batch_size', 250, 'size of batch during training')
-tf.flags.DEFINE_integer('num_epochs', 20, 'number of epochs to train')
-tf.flags.DEFINE_integer('patience', 5, 'number of epochs to train without improvement, early stopping')
-tf.flags.DEFINE_integer('log_every', 100, 'training loss logging frequency') 
-tf.flags.DEFINE_integer('save_every', 200, 'checkpointing frequency') 
-tf.flags.DEFINE_boolean('tb_graph', False, 'whether to log graph to TensorBoard') 
-tf.flags.DEFINE_boolean('tb_summs', False, 'whether to log summaries to TensorBoard') 
+tf.flags.DEFINE_integer('batch_size', 100, 'size of batch during training')
+tf.flags.DEFINE_integer('num_epochs', 50, 'number of epochs to train')
+tf.flags.DEFINE_integer('patience', 25, 'number of epochs to train without improvement, early stopping')
+tf.flags.DEFINE_integer('log_every', 250, 'training loss logging frequency') 
+tf.flags.DEFINE_integer('save_every', 500, 'checkpointing frequency') 
+tf.flags.DEFINE_boolean('tb_graph', True, 'whether to log graph to TensorBoard') 
+tf.flags.DEFINE_boolean('tb_summs', True, 'whether to log summaries to TensorBoard') 
 tf.flags.DEFINE_boolean('debug', False, 'enable debugging')
 tf.flags.DEFINE_boolean('verbose', True, 'will log in debug mode if True')
 tf.flags.DEFINE_float('gpu_mem', 0.45, 'percent of gpu mem to allocate')
@@ -69,9 +73,33 @@ tf.set_random_seed(utils.RAND_SEED)
 
 def main(_):
     FLAGS.encoder_layers = [int(x) for x in FLAGS.encoder_layers.split(',')]
-    FLAGS.id_lam = np.array([np.float32(x) for x in FLAGS.id_lam.split(',')])
-    FLAGS.l1_lam = np.array([np.float32(x) for x in FLAGS.l1_lam.split(',')])
-    print('id_lam: {}, l1_lam: {}'.format(FLAGS.id_lam, FLAGS.l1_lam))
+    num_layers = len(FLAGS.encoder_layers)
+
+    if FLAGS.id_lam is not None:
+        FLAGS.id_lam = np.array([float(x) for x in FLAGS.id_lam.split(',')], dtype=utils.FLOAT_DTYPE)
+    else:
+        FLAGS.id_lam = np.zeros(num_layers, dtype=utils.FLOAT_DTYPE)
+    if FLAGS.l1_lam is not None:
+        FLAGS.l1_lam = np.array([float(x) for x in FLAGS.l1_lam.split(',')], dtype=utils.FLOAT_DTYPE)
+    else:
+        FLAGS.l1_lam = np.zeros(num_layers, dtype=utils.FLOAT_DTYPE)
+    if FLAGS.l1_w_lam is not None:
+        FLAGS.l1_w_lam = np.array([float(x) for x in FLAGS.l1_w_lam.split(',')], dtype=utils.FLOAT_DTYPE)
+    else:
+        FLAGS.l1_w_lam = np.zeros(num_layers, dtype=utils.FLOAT_DTYPE)
+    if FLAGS.l2_w_lam is not None:
+        FLAGS.l2_w_lam = np.array([float(x) for x in FLAGS.l2_w_lam.split(',')], dtype=utils.FLOAT_DTYPE)
+    else:
+        FLAGS.l2_w_lam = np.zeros(num_layers, dtype=utils.FLOAT_DTYPE)
+    if FLAGS.l1_b_lam is not None:
+        FLAGS.l1_b_lam = np.array([float(x) for x in FLAGS.l1_b_lam.split(',')], dtype=utils.FLOAT_DTYPE)
+    else:
+        FLAGS.l1_b_lam = np.zeros(num_layers, dtype=utils.FLOAT_DTYPE)
+    if FLAGS.l2_b_lam is not None:
+        FLAGS.l2_b_lam = np.array([float(x) for x in FLAGS.l2_b_lam.split(',')], dtype=utils.FLOAT_DTYPE)
+    else:
+        FLAGS.l2_b_lam = np.zeros(num_layers, dtype=utils.FLOAT_DTYPE)
+
     data = utils.load_dataset(FLAGS.dataset, FLAGS.data_path, FLAGS.labels, FLAGS.colnames,
                               FLAGS.markers, FLAGS.keep_cols)
     gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction=FLAGS.gpu_mem)
@@ -85,8 +113,12 @@ def main(_):
         sess = tf_debug.LocalCLIDebugWrapperSession(sess)
         sess.add_tensor_filter('has_inf_or_nan', tf_debug.has_inf_or_nan)
 
+    tf.logging.debug('id_lam: {}, l1_lam: {}'.format(FLAGS.id_lam.tolist(), FLAGS.l1_lam.tolist()))
+    tf.logging.debug('l1_w_lam: {}, l2_w_lam: {}'.format(FLAGS.l1_w_lam.tolist(), FLAGS.l2_w_lam.tolist()))
+    tf.logging.debug('l1_b_lam: {}, l2_b_lam: {}'.format(FLAGS.l1_b_lam.tolist(), FLAGS.l2_b_lam.tolist()))
+
     if FLAGS.model_config:
-        model = saucie.load_model_from_config(FLAGS.dataset, FLAGS.model_config)
+        model, config = saucie.load_model_from_config(FLAGS.dataset, FLAGS.model_config)
     else:
         config = saucie.make_config(FLAGS)
         model = Saucie(**config)
@@ -118,18 +150,23 @@ def train(model, sess, data, batch_size, num_steps, thresh=0.5, patience=None,
     loss_tensors = model.loss_tensors_dict(graph)
     train_ops = dict(losses=loss_tensors, opt=model.optimize)
     test_ops = dict(losses=loss_tensors)
-    if len(data.data) > 5000:
-        subs = np.random.choice(np.arange(len(data.data)), 5000, replace=False)
-        test_feed_dict = {model.x_: data.data[subs,:],
-                          model.is_training_: False}
-    else:
-        test_feed_dict = {model.x_: data.test_data, model.is_training_: False}
+
+    train_feed_dict = {model.x_: data.data[:5000,:], model.is_training_:False}
+    test_feed_dict = {model.x_: data.test_data, model.is_training_: False}
+    train_labels = None if not data.labeled else data.labels[:5000]
+    test_labels = None if not data.labeled else data.test_labels
+
+    # flatten if labels are one-hot encoded
+    if train_labels is not None and len(train_labels.shape) != 1: 
+        train_labels = np.argmax(train_labels, axis=1)
+    if test_labels is not None and len(test_labels.shape) != 1:
+        test_labels = np.argmax(test_labels, axis=1)
+
     best_test_losses = None
     epochs_since_improved = 0
     current_step = model.global_step_.eval(sess)
     id_lam = model._model_config['sparse_config'].id_lam
     l1_lam = model._model_config['sparse_config'].l1_lam
-    cluster_layers = id_lam.nonzero()[0].tolist()
 
     print('Saving all run data to: {}'.format(model.save_path))
 
@@ -163,18 +200,18 @@ def train(model, sess, data, batch_size, num_steps, thresh=0.5, patience=None,
         if 'loss_summs' in train_dict:
             summ = train_dict['loss_summs']
             train_writer.add_summary(summ, step)
-        log_str = ('epoch/step: {}/{}, '.format(model.epochs_trained, step-1)
+        log_str = ('epoch {}, step {}/{}: '.format(model.epochs_trained, step-1, num_steps)
                    + utils.make_dict_str(train_losses))
         tf.logging.log_first_n(tf.logging.INFO, log_str, log_freq - 1)
         tf.logging.log_every_n(tf.logging.INFO, log_str, log_freq)
 
         if ckpt_freq and (step % ckpt_freq) == 0:
-            tf.logging.info('Saving model, after step {}'.format(step-1))
+            tf.logging.info('Saving model, after step {}'.format(step))
             model.save_model(sess, 'model', step=step)
             if save_plots:
                 tf.logging.debug('Plotting middle layer embedding')
-                plot_dict = sess.run(plot_ops, feed_dict=test_feed_dict)
-                make_plots(cluster_layers, id_lam, l1_lam, plot_folder, plot_dict, data, 'cluster_layer-{}.png')
+                plot_dict = sess.run(plot_ops, feed_dict=train_feed_dict)
+                make_plots(id_lam, l1_lam, plot_folder, plot_dict, data, train_labels)
 
         if model.epochs_trained != data.epochs_trained:
             model.epochs_trained = sess.run(tf.assign(model.current_epoch_, data.epochs_trained))
@@ -195,7 +232,7 @@ def train(model, sess, data, batch_size, num_steps, thresh=0.5, patience=None,
                 if save_plots:
                     tf.logging.debug('Plotting best middle layer embedding')
                     plot_dict = sess.run(plot_ops, feed_dict=test_feed_dict)
-                    make_plots(cluster_layers, id_lam, l1_lam, plot_folder, plot_dict, data, 'best-cluster_layer-{}.png')
+                    make_plots(id_lam, l1_lam, plot_folder, plot_dict, data, test_labels, True, True)
             else:
                 epochs_since_improved += 1
             if patience and epochs_since_improved == patience:
@@ -204,28 +241,40 @@ def train(model, sess, data, batch_size, num_steps, thresh=0.5, patience=None,
                                 + utils.make_dict_str(best_test_losses))
                 break
 
-    tf.logging.info('Trained for {} epochs'.format(model.epochs_trained))
+    tf.logging.info('Trained for {} epochs, {} steps'.format(model.epochs_trained, step))
 
     print('Saved all run data to: {}'.format(model.save_path))
     return test_losses
 
 
-def make_plots(cluster_layers, id_lam, l1_lam, plot_folder, plot_dict, data, title_fmt='clust_layer-{}.png'):
+def make_plots(id_lam, l1_lam, plot_folder, plot_dict, data, labels=None, testing=False, best=False):
+    cluster_layers = id_lam.nonzero()[0].tolist()
+    save_str = '' if not testing else 'test-'
+    save_str += '' if not best else 'best-'
+    if testing:
+        plot_data = data.test_data
+    else:
+        plot_data = data.data[:5000]
     for i, acts in enumerate(plot_dict['cluster_acts']):
         hl_idx = cluster_layers[i]
-        save_file = plot_folder + '/emb-' + title_fmt.format(hl_idx)
-        title = 'Embedding, clustered layer-{}, id_lam/l1_lam={:5.4E}/{:5.4E}'.format(hl_idx, id_lam[hl_idx], l1_lam[hl_idx])
+        save_file = plot_folder + '/emb-{}layer={}'.format(save_str, hl_idx)
+        title = 'Embedding, clust layer-{}, id_lam/l1_lam={:3.2E}/{:3.2E}'.format(hl_idx, id_lam[hl_idx], l1_lam[hl_idx])
         clusts = utils.binarize(acts, FLAGS.thresh)
-        tf.logging.debug('Top 5 activated neurons: {}'.format(acts.max(axis=1)[:5]))
+        tf.logging.debug('Top 5 neurons max acts: {}'.format(acts.max(axis=1)[:5]))
         tf.logging.debug('Mean max activation: {}'.format(acts.max(axis=1).mean()))
-        tf.logging.debug('Bottom 5 max activated neurons: {}'.format(acts.max(axis=1)[-5:]))
-        plotting.plot_embedding2D(plot_dict['emb'], clusts, save_file, title)
-        if '_colnames' in data.__dict__ and FLAGS.dataset in utils.CYTOF_DATASETS:
-            save_file = plot_folder + '/heatmap-' + title_fmt.format(hl_idx)
-            plotting.plot_cluster_heatmap(data.test_data, clusts, data._colnames, data._markers, save_file)
+        tf.logging.debug('Count of activated nodes: {}'.format(np.sum(acts.max(axis=0) > FLAGS.thresh)))
+        plotting.plot_embedding2D(plot_dict['emb'], clusts, save_file, title) 
+        if '_colnames' in data.__dict__ and FLAGS.dataset in utils.CYTOF_DATASETS and len(np.unique(clusts)) > 1:
+            save_file = plot_folder + '/heatmap-{}layer={}.png'.format(save_str, hl_idx)
+            # plotting.plot_cluster_heatmap(plot_data, clusts, data._colnames, data._markers, save_file=save_file)
+            plotting.plot_cluster_linkage_heatmap(plot_data, clusts, data._colnames, data._markers, save_file)
+    if labels is not None:
+        save_file = plot_folder + '/emb-{}labels.png'.format(save_str)
+        title = 'Embedding, with true labels'
+        plotting.plot_embedding2D(plot_dict['emb'], labels, save_file, title)
     if cluster_layers == []:
         plotting.plot_embedding2D(plot_dict['emb'], np.zeros(len(plot_dict['emb'])), plot_folder + '/emb.png','Embedding, no clusters')
-
+    return
 
 if __name__ == '__main__':
     tf.app.run()

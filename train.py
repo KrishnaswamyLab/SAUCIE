@@ -94,16 +94,16 @@ def process_args(args):
 	return args
 
 def run_inits(args, sess, mlp):
-        init_vars = tf.global_variables()
-        init_op = tf.variables_initializer(init_vars)
-        sess.run(init_op)
-        saver = tf.train.Saver(init_vars, max_to_keep=1)
-        return saver
+		init_vars = tf.global_variables()
+		init_op = tf.variables_initializer(init_vars)
+		sess.run(init_op)
+		saver = tf.train.Saver(init_vars, max_to_keep=1)
+		return saver
 
 def save(args, sess, mlp, saver, loader, iteration):
-        savefile = os.path.join(args.save_folder, 'AE')
-        saver.save(sess, savefile , global_step=iteration, write_meta_graph=True)
-        print("Model saved to {}".format(savefile))
+		savefile = os.path.join(args.save_folder, 'AE')
+		saver.save(sess, savefile , global_step=iteration, write_meta_graph=True)
+		print("Model saved to {}".format(savefile))
 
 def train(args):
 	loader = get_loader(args)
@@ -215,5 +215,5 @@ def train(args):
 
 
 if __name__=='__main__':
-        args = parse_args()
-        train(args)
+		args = parse_args()
+		train(args)

@@ -39,10 +39,11 @@ def load_model_from_config(dataset='mnist', config_path=SAVE_PATH+'/best.config'
     else:
         config = default_config(dataset)
         model = Saucie(**config)
+    return model, config
 
 
 def default_config(dataset='mnist'):
-    sparse_config = utils.SparseLayerConfig(num_layers=3, id_lam=np.array([1e2,0.,0.]))
+    sparse_config = utils.SparseLayerConfig(num_layers=3, id_lam=np.array([1e-3,0.,0.], dtype=utils.FLOAT_DTYPE))
     if dataset == 'mnist':
         input_dim = 784
     elif dataset == 'zika':
@@ -56,7 +57,10 @@ def default_config(dataset='mnist'):
 
 
 def make_config(args):
-    sparse_config = utils.SparseLayerConfig(num_layers=len(args.id_lam), id_lam=args.id_lam, l1_lam=args.l1_lam)
+    sparse_config = utils.SparseLayerConfig(num_layers=len(args.id_lam),
+                                            id_lam=args.id_lam, l1_lam=args.l1_lam,
+                                            l1_w_lam=args.l1_w_lam,
+                                            l2_w_lam=args.l2_w_lam)
     if args.dataset == 'mnist':
         input_dim = 784
     elif args.dataset == 'zika':
@@ -89,10 +93,7 @@ class Layer():
     def __call__(self, x):
         x_dtype = x.dtype
         if self.act_ is None:
-            with tf.variable_scope(self.name):
-                if self._batch_norm:
-                    x = tf.layers.batch_normalization(x, training=self.is_training_,
-                                                      name='act_norm')
+            with tf.variable_scope(self.name):   
                 self.w_ = tf.get_variable('w', [self._in_dim, self._out_dim], dtype=x_dtype, initializer=self.w_init(dtype=x_dtype))
                 if self._use_bias:
                     self.b_ = tf.get_variable('b', [self._out_dim], dtype=x_dtype, initializer=self.b_init(dtype=x_dtype))
@@ -104,7 +105,10 @@ class Layer():
                         for act_fn in self._act_fn:
                             self.act_ = ACT_FNS[act_fn](self.act_, name='act_{}'.format(act_fn))
                     else:
-                        self.act_ = ACT_FNS[self._act_fn](self.act_, name='hidden_rep')
+                        self.act_ = ACT_FNS[self._act_fn](self.act_, name='act_{}'.format(self._act_fn)) 
+                if self._batch_norm:
+                    self.act_ = tf.layers.batch_normalization(self.act_, center=True,
+                                        training=self.is_training_, name='bn')
             return self.act_
         else:
             return self.act_
@@ -113,7 +117,7 @@ class Layer():
 class Saucie():
     def __init__(self, input_dim, encoder_layers, emb_dim, act_fn, d_act_fn,
                  use_bias, loss_fn, opt_method, lr, batch_norm, sparse_config,
-                 save_path=SAVE_PATH):
+                 save_path=SAVE_PATH, overwrite=False):
         """
         Args:
             input_dim: shape of input vector
@@ -145,7 +149,8 @@ class Saucie():
         self._model_config = OrderedDict(
             input_dim=input_dim, encoder_layers=encoder_layers,
             emb_dim=emb_dim, act_fn=act_fn, d_act_fn=d_act_fn, use_bias=use_bias,
-            loss_fn=loss_fn, lr=lr, batch_norm=batch_norm, sparse_config=sparse_config)
+            loss_fn=loss_fn, opt_method=opt_method, lr=lr, batch_norm=batch_norm,
+            sparse_config=sparse_config)
         current_date = datetime.now().strftime(DATETIME_FMT)
         run = 0
         while os.path.exists(os.path.join(save_path, current_date, str(run))):
@@ -153,7 +158,7 @@ class Saucie():
             if os.path.exists(config_path):
                 with open(config_path, 'rb') as f:
                     config = pickle.load(f)
-                if config == self._model_config:
+                if config == self._model_config and overwrite:
                     break
             run += 1
         self.save_path = os.path.join(save_path, current_date, str(run))
@@ -191,7 +196,7 @@ class Saucie():
 
     def build(self, sess):
         self.sess = sess
-        self.x_ = tf.placeholder(tf.float32, shape=[None, self._input_dim], name='x')
+        self.x_ = tf.placeholder(utils.TF_FLOAT_DTYPE, shape=[None, self._input_dim], name='x')
         self.is_training_ = tf.placeholder(tf.bool, name='is_training')
         self.hidden_layers = []
 
@@ -234,11 +239,13 @@ class Saucie():
                 tf.add_to_collection('l1_regularization', x)
             if id_lam[i] != 0.:
                 tf.add_to_collection('id_regularization', x) 
+                """
                 noise = tf.cond(self.is_training_,
-                        lambda: tf.random_normal(tf.shape(x), mean=0, stddev=0),
+                        lambda: tf.random_normal(tf.shape(x), mean=0, stddev=1),
                         lambda: tf.zeros_like(x),
                         name='noise')
                 x += noise
+                """
             in_dim = out_dim
         layer_name = 'embedding'
         out_dim = self._emb_dim
@@ -255,7 +262,7 @@ class Saucie():
             act_fn = self._d_act_fn if i != 0 else None
             if type(self._d_act_fn) == list:
                 act_fn = self._d_act_fn[i]
-            x = self.add_layer(x, in_dim, out_dim, False, layer_name,
+            x = self.add_layer(x, in_dim, out_dim, self._batch_norm, layer_name,
                                act_fn, self._use_bias)
             in_dim = out_dim
         layer_name = 'reconstructed'
@@ -264,7 +271,7 @@ class Saucie():
             act_fn = 'sigmoid'
         else:
             act_fn = self._d_act_fn
-        reconstructed_ = self.add_layer(x, in_dim, out_dim, self._batch_norm, layer_name, act_fn,
+        reconstructed_ = self.add_layer(x, in_dim, out_dim, None, layer_name, act_fn,
                                         self._use_bias)
         return reconstructed_
 
@@ -283,12 +290,18 @@ class Saucie():
         loss_ = self.recons_loss
         id_lam = self._sparse_config.id_lam
         l1_lam = self._sparse_config.l1_lam
+        l1_w_lam = self._sparse_config.l1_w_lam
+        l2_w_lam = self._sparse_config.l2_w_lam
+        l1_b_lam = self._sparse_config.l1_b_lam
+        l2_b_lam = self._sparse_config.l2_b_lam
 
         sparse_acts = tf.get_collection('id_regularization')
         if sparse_acts:
             with tf.name_scope('id_reg'):
                 for act_idx, layer_idx in enumerate(id_lam.nonzero()[0]):
                     lam = id_lam[layer_idx]
+                    # act_ = sparse_acts[act_idx]
+                    # act_ = tf.multiply(lam, (act_ + 1.) / tf.cast(2 * tf.shape(act_)[0], utils.TF_FLOAT_DTYPE), name='normalized_act-{}'.format(layer_idx))
                     act_ = ACT_FNS['softmax'](sparse_acts[act_idx], name='normalized_act-{}'.format(layer_idx))
                     id_name = 'id_loss_layer_{}'.format(layer_idx)
                     tf.add_to_collection('id_penalties', utils.id_penalty(act_, lam, id_name))
@@ -304,10 +317,54 @@ class Saucie():
                     lam = l1_lam[layer_idx]
                     act_ = sparse_acts[act_idx]
                     l1_name = 'l1_loss_layer_{}'.format(layer_idx)
-                    tf.add_to_collection('l1_penalties', utils.l1_act_penalty(act_, lam, l1_name))
+                    tf.add_to_collection('l1_penalties', utils.l1_penalty(act_, lam, l1_name))
                 l1_losses_ = tf.get_collection('l1_penalties')
                 l1_loss_ = tf.reduce_sum(l1_losses_, name='l1_loss')
                 loss_ += l1_loss_
+
+        if len(l1_w_lam.nonzero()[0]) != 0:
+            with tf.name_scope('l1_w_reg'):
+                for layer_idx in l1_w_lam.nonzero()[0]:
+                    lam = l1_w_lam[layer_idx]
+                    layer = self.hidden_layers[layer_idx]
+                    l1_w_name = 'l1_w_loss_layer_{}'.format(layer_idx)
+                    tf.add_to_collection('l1_w_penalties', utils.l1_penalty(layer.w_, lam, l1_w_name))
+                l1_w_losses_ = tf.get_collection('l1_w_penalties')
+                l1_w_loss_ = tf.reduce_sum(l1_w_losses_, name='l1_w_loss')
+                loss_ += l1_w_loss
+
+        if len(l2_w_lam.nonzero()[0]) != 0:
+            with tf.name_scope('l2_w_reg'):
+                for layer_idx in l2_w_lam.nonzero()[0]:
+                    lam = l2_w_lam[layer_idx]
+                    layer = self.hidden_layers[layer_idx]
+                    l1_w_name = 'l2_w_loss_layer_{}'.format(layer_idx)
+                    tf.add_to_collection('l2_w_penalties', utils.l2_penalty(layer.w_, lam, l1_w_name))
+                l1_w_losses_ = tf.get_collection('l1_w_penalties')
+                l1_w_loss_ = tf.reduce_sum(l1_w_losses_, name='l1_w_loss')
+                loss_ += l1_w_loss
+            
+        if len(l1_b_lam.nonzero()[0]) != 0:
+            with tf.name_scope('l1_b_reg'):
+                for layer_idx in l1_b_lam.nonzero()[0]:
+                    lam = l1_b_lam[layer_idx]
+                    layer = self.hidden_layers[layer_idx]
+                    l1_b_name = 'l1_b_loss_layer_{}'.format(layer_idx)
+                    tf.add_to_collection('l1_b_penalties', utils.l1_penalty(layer.b_, lam, l1_b_name))
+                l1_b_losses_ = tf.get_collection('l1_b_penalties')
+                l1_b_loss_ = tf.reduce_sum(l1_b_losses_, name='l1_b_loss')
+                loss_ += l1_b_loss
+
+        if len(l2_b_lam.nonzero()[0]) != 0:
+            with tf.name_scope('l2_b_reg'):
+                for layer_idx in l2_b_lam.nonzero()[0]:
+                    lam = l2_b_lam[layer_idx]
+                    layer = self.hidden_layers[layer_idx]
+                    l1_b_name = 'l2_b_loss_layer_{}'.format(layer_idx)
+                    tf.add_to_collection('l2_b_penalties', utils.l2_penalty(layer.b_, lam, l1_b_name))
+                l1_b_losses_ = tf.get_collection('l1_b_penalties')
+                l1_b_loss_ = tf.reduce_sum(l1_b_losses_, name='l1_b_loss')
+                loss_ += l1_b_loss
 
         loss_ = tf.identity(loss_, name='combined_loss')
         return loss_
@@ -321,6 +378,11 @@ class Saucie():
             optimizer = tf.train.GradientDescentOptimizer(self._lr)
         self.global_step_ = tf.Variable(0, name='global_step', trainable=False)
         self.current_epoch_ = tf.Variable(0, name='current_epoch', trainable=False)
+        # used for batch norm calculations
+        if self._batch_norm:
+            update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
+            with tf.control_dependencies(update_ops):
+                return optimizer.minimize(self.loss, self.global_step_)
         return optimizer.minimize(self.loss, self.global_step_)
 
     def loss_tensors_dict(self, graph):
