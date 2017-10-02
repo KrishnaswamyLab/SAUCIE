@@ -2,7 +2,7 @@
 # File: saucie_utils.py
 # Author: Krishnan Srinivasan <krishnan1994 at gmail>
 # Date: 21.09.2017
-# Last Modified Date: 21.09.2017
+# Last Modified Date: 02.10.2017
 
 """
 Utils for SAUCIE
@@ -15,16 +15,27 @@ import os
 
 from sklearn.preprocessing import LabelEncoder
 from sklearn.model_selection import train_test_split
+from sklearn.metrics.pairwise import pairwise_distances
+from sklearn.metrics import mutual_info_score
+from sklearn.cluster import k_means
+from sklearn.decomposition import PCA
+from scipy.io import loadmat
 from typing import NamedTuple
 
+
+########### GLOBAL VARIABLES
+
 RAND_SEED = 42
-CYTOF_DATASETS = {'flu', 'zika'}
+CYTOF_DATASETS = {'flu', 'zika', 'emt_cytof'}
+RNASEQ_DATASETS = {'emt_rnaseq'}
 FLOAT_DTYPE = np.float32
 TF_FLOAT_DTYPE = tf.as_dtype(FLOAT_DTYPE)
 EPS = FLOAT_DTYPE(1e-8)
+RNASEQ_PCA_DIMS = 20
+N_CLUSTS = [3, 7, 10]
 
-# NamedTuple('SparseLayerConfig', ['num_layers', 'id_lam', 'l1_lam', 'l1_w_lam',
-#                                  'l2_w_lam', 'l1_b_lam', 'l2_b_lam'])
+
+########### MODEL/TENSORFLOW UTILS
 
 class SparseLayerConfig(NamedTuple): 
     num_layers: int = 3
@@ -65,6 +76,7 @@ def binary_crossentropy(predicted, actual, name='binary_crossentropy_error'):
     return -tf.reduce_mean(actual * tf.log(predicted + EPS)
                            + (1 - actual) * tf.log(1 - predicted + EPS), name=name)
 
+
 def binarize(acts, thresh=.5):
     binarized = np.where(acts>thresh, 1, 0)
     unique_rows = np.vstack({tuple(row) for row in binarized})
@@ -83,11 +95,14 @@ def binarize(acts, thresh=.5):
 
 
 # information dimension regularization penalty
+
 def id_penalty(act, lam, name='id_loss'):
     return tf.multiply(lam, -tf.reduce_mean(act * tf.log(act + EPS)), name=name)
 
+
 def l1_penalty(t, lam, name='l1_loss'):
     return tf.multiply(lam, tf.reduce_sum(tf.abs(t)), name=name)
+
 
 def l2_penalty(t, lam, name='l2_loss'):
     return tf.multiply(lam, tf.reduce_sum(tf.sqrt(tf.square(t))), name=name)
@@ -132,6 +147,8 @@ def lrelu(x, leak=0.2, name="lrelu"):
          f2 = 0.5 * (1 - leak)
          return f1 * x + f2 * abs(x)
 
+
+############ SCOPE DECORATORS
 
 # Code from Danijar Hafner gist:
 # https://gist.github.com/danijar/8663d3bbfd586bffecf6a0094cd116f2
@@ -197,6 +214,8 @@ def define_name_scope(function, scope=None, *args, **kwargs):
         return getattr(self, attribute)
     return decorator
 
+
+############ DATASET UTILS
 
 # Code from TensorFlow source example:
 # https://github.com/tensorflow/tensorflow/blob/master/tensorflow/contrib/learn/python/learn/datasets/mnist.py
@@ -362,12 +381,31 @@ def load_dataset_from_csv(csv_file, header=None, index_col=None, labels=None,
     return dataset
 
 
+def load_dataset_from_mat(mat_file, data_key='data', label_key=None, colnames=None,
+                          train_ratio=0.9):
+    mat_dict = loadmat(mat_file) 
+    data = mat_dict[data_key].astype(FLOAT_DTYPE)
+    if label_key:
+        labels = mat_dict[label_key] 
+        train_data, test_data, train_labels, test_labels = train_test_split(data, labels, train_ratio=train_ratio, random_state=RAND_SEED)
+        data_dict = dict(_data=train_data, _test_data=test_data, _labels=train_labels, _test_labels=test_labels, labeled=True)
+    else:
+        train_data, test_data = train_test_split(data, train_size=train_ratio, random_state=RAND_SEED)
+        data_dict = dict(_data=train_data, _test_data=test_data, labeled=False)
+    if colnames:
+        colnames = [x.strip() for x in open(colnames).readlines()]
+        data_dict['_colnames'] = colnames
+    return DataSet(**data_dict)
+
+
 def load_dataset(dataset, data_path, labels=None, colnames=None, markers=None,
                  keep_cols=None):
-    if data_path.split('.')[-1] == 'npz':
+    filetype = data_path.split('.')[-1]
+    if filetype == 'npz':
         data = DataSet.load(data_path)
-    elif data_path.split('.')[-1] == 'csv':
+    elif filetype == 'csv':
         if len(glob.glob(data_path)) > 1:
+            data_path_re = data_path
             data_path = glob.glob(data_path)
         if labels:
             if len(glob.glob(labels)) > 1:
@@ -380,14 +418,53 @@ def load_dataset(dataset, data_path, labels=None, colnames=None, markers=None,
                                      colnames=colnames,
                                      markers=markers,
                                      keep_cols=keep_cols)
-        if dataset in CYTOF_DATASETS:
-            data._data = np.arcsinh(data._data / 5, dtype=FLOAT_DTYPE)
-            data._test_data = np.arcsinh(data._test_data / 5, dtype=FLOAT_DTYPE)
-            data._data = data._data / data._data.max()
-            data._test_data = data._test_data / data._data.max()
+    elif filetype == 'mat':
+        data = load_dataset_from_mat(data_path, label_key=labels, colnames=colnames)
+    if dataset in CYTOF_DATASETS:
+        data._data = np.arcsinh(data._data / 5, dtype=FLOAT_DTYPE)
+        data._test_data = np.arcsinh(data._test_data / 5, dtype=FLOAT_DTYPE)
+        data._data = data._data / data._data.max()
+        data._test_data = data._test_data / data._data.max()
+    elif dataset in RNASEQ_DATASETS:
+        pca = PCA(RNASEQ_PCA_DIMS)
+        print('Fitting PCA on data with shape: {}, may take awhile'.format(data.data.shape))
+        full_data = np.concatenate([data.data, data.test_data], axis=0)
+        full_data = pca.fit_transform(full_data)
+        print('Done fitting PCA')
+        data._data = full_data[:len(data._data), :]
+        data._test_data = full_data[len(data._data):, :]
+        full_max, full_min = full_data.max(axis=0), full_data.min(axis=0)
+        data._data = (data._data - full_min) / (full_max - full_min)
+        data._test_data = (data._test_data - full_min) / (full_max - full_min)
+        data.__dict__['pca'] = pca
+        del full_data
+    if filetype != 'npz':
         if type(data_path) == str:
             data_path = data_path[:-4] + '.npz'
         else:
-            data_path = os.path.split(data_path[0])[0] + '/combined.npz'
+            data_path = data_path_re[:-5] + '.npz'
         data.save(data_path)
     return data
+
+
+def activation_mutual_info(x, y, method='dist', k=None, bins=None):
+    """
+    Args:
+        x: input data (n x d)
+        y: data embedded by autoencoder (n x d_layer)
+    Returns:
+        mi: mutual info score from quantized distance grid 
+    """
+    n = len(x)
+    if k is None:
+        x_dist = pairwise_distances(x).flatten()[:n * n-1]
+        y_dist = pairwise_distances(y).flatten()[:n * n-1]
+        if bins == None:
+            bins = np.sqrt(n / 5)
+        hist = np.histogram2d(x_dist, y_dist, bins)[0]
+        mi = mutual_info_score(np.zeros(n), np.zeros(n), contingency=hist)
+    else:
+        x_clust = k_means(x, k)[1]
+        y_clust = k_means(x, k)[1]
+        mi = mutual_info_score(x_clust, y_clust)
+    return mi

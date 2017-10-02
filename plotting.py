@@ -2,11 +2,13 @@
 # File: plotting.py
 # Author: Krishnan Srinivasan <krishnan1994 at gmail>
 # Date: 21.09.2017
-# Last Modified Date: 21.09.2017
+# Last Modified Date: 28.09.2017
 
 """
 Plotting utils for SAUCIE
 """
+
+import os
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -15,10 +17,11 @@ import seaborn as sns
 from sklearn.manifold import TSNE
 from sklearn.decomposition import PCA
 from sklearn.preprocessing import scale
+from mpl_toolkits.mplot3d import Axes3D
 
 
-def plot_embedding2D(data, clusts, save_file='./plots/emb.png',
-                     title="Embedding with clusters", dim_red='TSNE'):
+def plot_embedding2D(data, clusts, save_file='./plots/emb2d.png',
+                     title="Embedding with clusters", dim_red='PCA'):
     fig, ax = plt.subplots(1,1, figsize=(8,6))
     ax.set_title(title)
     
@@ -30,17 +33,50 @@ def plot_embedding2D(data, clusts, save_file='./plots/emb.png',
             pca = PCA(2)
             data = pca.fit_transform(data)
 
-    unique_clusts = np.unique(clusts)
-    colors = [plt.cm.jet(float(i) / len(unique_clusts))
-              for i in range(len(unique_clusts))]
-    for i, clust in enumerate(unique_clusts):
-        sub_idx = clusts == clust
-        ax.scatter(data[sub_idx,0], data[sub_idx,1], c=colors[i], alpha=.3,
-                   s=12, label=int(clust))
+    if clusts:
+        unique_clusts = np.unique(clusts)
+        colors = [plt.cm.jet(float(i) / len(unique_clusts))
+                  for i in range(len(unique_clusts))]
+        for i, clust in enumerate(unique_clusts):
+            sub_idx = clusts == clust
+            ax.scatter(data[sub_idx,0], data[sub_idx,1], c=colors[i], alpha=.3,
+                       s=12, label=int(clust))
 
-    lgnd = ax.legend()
+        lgnd = ax.legend()
+    else:
+        ax.scatter(data[:,0], data[:,1], alpha=.3, s=12)
 
+    save_dir = os.path.split(save_file)[0]
+    if not os.path.exists(save_dir):
+        os.makedirs(save_dir)
     fig.savefig(save_file, dpi=300)
+    plt.close('all')
+
+
+def plot_embedding3D(data, clusts=None, save_file='./plots/emb3d.png', title='3D embedding', dim_red='PCA'):
+    if data.shape[1] != 3:
+        pca = PCA(3)
+        data = pca.fit_transform(data)
+
+    f, ax = plt.subplots(ncols=1, nrows=1, subplot_kw={'projection': '3d'}) 
+
+    if clusts:
+        unique_clusts = np.unique(clusts)
+        colors = [plt.cm.jet(float(i)) for i in range(len(unique_clusts))]
+        for i, clust in enumerate(unique_clusts):
+            sub_idx = clusts == clust
+            ax.scatter(data[sub_idx,0], data[sub_idx,1], data[sub_idx,2], c=colors[i], alpha=.3,
+                      s=12, label=int(clust))
+        lgnd = ax.legend()
+    else:
+        ax.scatter(recons_pc[:,0], recons_pc[:,1], recons_pc[:,2])
+    ax.set_title(title)
+
+    save_dir = os.path.split(save_file)[0]
+    if not os.path.exists(save_dir):
+        os.makedirs(save_dir)
+
+    f.savefig(save_file, dpi=300)
     plt.close('all')
 
 
@@ -69,6 +105,7 @@ def plot_cluster_heatmap(data, clusts, colnames, markers=None, zscore=True,
     ax.set_xlabel('Marker', {'fontsize': 15})
     f.savefig(save_file, dpi=300)
     plt.close('all')
+
 
 def plot_cluster_linkage_heatmap(data, clusts, colnames, markers=None, save_file='./plots/linkage.png',
                                  title="Marker vs Cluster linkage heatmap"):

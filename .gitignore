@@ -13,6 +13,7 @@
 *.sh
 *.txt
 *.swp
-saucie_models
 checkpoint
 .ipynb_checkpoints/
+data
+saucie_models
