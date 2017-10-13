@@ -33,7 +33,8 @@ tf.flags.DEFINE_boolean('keep_cols', False, 'whether to keep colnames in data ma
 tf.flags.DEFINE_string('model_config', None, 'name of model config file, if file does not exist will build a default model')
 tf.flags.DEFINE_string('model_dir', '/data/krishnan/saucie_models', 'name of directory to save model variables and logs in')
 tf.flags.DEFINE_string('encoder_layers', '1024,512,256', 'comma-separated list of layer shapes for encoder')
-tf.flags.DEFINE_integer('emb_dim', 3, 'shape of bottle-neck layer')
+tf.flags.DEFINE_integer('emb_dim', 10, 'shape of bottle-neck layer')
+tf.flags.DEFINE_integer('vis_dim', 3, 'shape of visualization layer')
 tf.flags.DEFINE_string('act_fn', 'tanh', 'name of activation function used in encoder')
 tf.flags.DEFINE_string('d_act_fn', 'tanh', 'name of activation function used in decoder')
 tf.flags.DEFINE_string('id_lam', None, 'comma-separated list of id regularization scaling coefficients for each encoder layer')
@@ -145,7 +146,7 @@ def process_flags():
 
 
 def train(model, sess, data, batch_size, num_steps, thresh=0.5, patience=None,
-          log_freq=100, ckpt_freq=100, save_plots=True):
+          log_freq=100, ckpt_freq=100, save_plots=True, train_id=True):
     """
     Args:
         model: Saucie instance to train
@@ -159,18 +160,17 @@ def train(model, sess, data, batch_size, num_steps, thresh=0.5, patience=None,
         ckpt_freq: number of steps before checkpointing model
         save_plots: boolean determining whether or not to save plots
     """
-    model.epochs_trained = data.epochs_trained = model.current_epoch_.eval(sess)
+    epochs_trained = data.epochs_trained = model.current_epoch_.eval(sess)
     graph = sess.graph
     loss_tensors = model.loss_tensors_dict(graph)
     train_ops = OrderedDict(losses=loss_tensors, opt=model.optimize)
     test_ops = OrderedDict(losses=loss_tensors)
     n_clusts = utils.N_CLUSTS if FLAGS.n_clusts is None else FLAGS.n_clusts
 
-    train_feed_dict = {model.x_: data.data[:5000,:], model.is_training_:False}
+    train_feed_dict = {model.x_: data.data[:5000,:], model.is_training_:True}
     test_feed_dict = {model.x_: data.test_data, model.is_training_: False}
     train_labels = None if not data.labeled else data.labels[:5000]
     test_labels = None if not data.labeled else data.test_labels
-
     # flatten if labels are one-hot encoded
     if train_labels is not None and len(train_labels.shape) != 1: 
         train_labels = np.argmax(train_labels, axis=1)
@@ -212,13 +212,16 @@ def train(model, sess, data, batch_size, num_steps, thresh=0.5, patience=None,
             os.makedirs(plot_folder)
         plot_ops = OrderedDict(emb=model.encoder)
         plot_ops['cluster_acts'] = tf.get_collection('id_normalized_activations')
+        if FLAGS.dataset in RNASEQ_DATASETS:
+            plot_ops['recons'] = model.decoder
 
     tf.logging.info('Total steps: {}'.format(num_steps))
     for step in range(current_step + 1, num_steps + 1):
         batch = data.next_batch(batch_size)
         if data.labeled:
             batch, labels = batch
-        feed_dict = {model.x_: batch, model.is_training_: True}
+        feed_dict = {model.x_: batch, model.is_training_: True,
+                     model.train_id_: train_id}
         train_dict = sess.run(train_ops, feed_dict=feed_dict)
 
         train_losses = train_dict['losses']
@@ -236,7 +239,7 @@ def train(model, sess, data, batch_size, num_steps, thresh=0.5, patience=None,
             mi_summ = sess.run(mi_summ_, feed_dict=dict(zip(mi_, mi)))
             train_writer.add_summary(mi_summ, step)
             tf.logging.info('Mutual info scores: {}'.format(mi))
-        log_str = ('epoch {}, step {}/{}: '.format(model.epochs_trained, step-1, num_steps)
+        log_str = ('epoch {}, step {}/{}: '.format(epochs_trained, step-1, num_steps)
                    + utils.make_dict_str(train_losses))
         tf.logging.log_first_n(tf.logging.INFO, log_str, log_freq - 1)
         tf.logging.log_every_n(tf.logging.INFO, log_str, log_freq)
@@ -249,8 +252,8 @@ def train(model, sess, data, batch_size, num_steps, thresh=0.5, patience=None,
                 plot_dict = sess.run(plot_ops, feed_dict=train_feed_dict)
                 make_plots(model._sparse_config, plot_folder, plot_dict, data, train_labels)
 
-        if model.epochs_trained != data.epochs_trained:
-            model.epochs_trained = sess.run(tf.assign(model.current_epoch_, data.epochs_trained))
+        if epochs_trained != data.epochs_trained:
+            epochs_trained = sess.run(tf.assign(model.current_epoch_, data.epochs_trained))
             test_dict = sess.run(test_ops, feed_dict=test_feed_dict)
             test_losses = test_dict['losses']
             if 'loss_summs' in test_dict:
@@ -267,13 +270,13 @@ def train(model, sess, data, batch_size, num_steps, thresh=0.5, patience=None,
                 mi_summ = sess.run(mi_summ_, feed_dict=dict(zip(mi_, mi)))
                 test_writer.add_summary(mi_summ, step)
                 tf.logging.info('Mutual info scores: {}'.format(mi))
-            log_str = ('TESTING -- epoch: {}, '.format(model.epochs_trained)
+            log_str = ('TESTING -- epoch: {}, '.format(epochs_trained)
                        + utils.make_dict_str(test_losses))
             tf.logging.info(log_str)
 
             if best_test_losses is None or best_test_losses['loss'] > test_losses['loss']:
                 model.saver.save(sess, model.save_path + '/best.model')
-                tf.logging.info('Best model saved after {} epochs'.format(model.epochs_trained))
+                tf.logging.info('Best model saved after {} epochs'.format(epochs_trained))
                 best_test_losses = test_losses
                 epochs_since_improved = 0
                 if save_plots:
@@ -284,22 +287,20 @@ def train(model, sess, data, batch_size, num_steps, thresh=0.5, patience=None,
                 epochs_since_improved += 1
             if patience and epochs_since_improved == patience:
                 tf.logging.info('Early stopping, test loss did not improve for {} epochs.'.format(epochs_since_improved))
-                tf.logging.info('Best test loss: epoch {}: '.format(model.epochs_trained - epochs_since_improved)
+                tf.logging.info('Best test loss: epoch {}: '.format(epochs_trained - epochs_since_improved)
                                 + utils.make_dict_str(best_test_losses))
                 break
 
-    tf.logging.info('Trained for {} epochs, {} steps'.format(model.epochs_trained, step))
+    tf.logging.info('Trained for {} epochs, {} steps'.format(epochs_trained, step))
 
     print('Saved all run data to: {}'.format(model.save_path))
     return test_losses
 
 
-def make_plots(sparse_config, plot_folder, plot_dict, data, labels=None, testing=False, best=False, heatmap_only=True):
+def make_plots(sparse_config, plot_folder, plot_dict, data, suffix='', labels=None, heatmap_only=True):
     id_lam = sparse_config.id_lam
     l1_lam = sparse_config.l1_lam
     cluster_layers = id_lam.nonzero()[0].tolist()
-    save_str = '' if not testing else 'test-'
-    save_str += '' if not best else 'best-'
     plot_fn = plotting.plot_embedding2D if plot_dict['emb'].shape[1] != 3 else plotting.plot_embedding3D
     if testing:
         plot_data = data.test_data
@@ -312,20 +313,28 @@ def make_plots(sparse_config, plot_folder, plot_dict, data, labels=None, testing
         tf.logging.debug('Mean max activation: {}'.format(acts.max(axis=1).mean()))
         tf.logging.debug('Count of activated nodes: {}'.format(np.sum(acts.max(axis=0) > FLAGS.thresh)))
         if not heatmap_only:
-            save_file = plot_folder + '/emb-{}layer={}'.format(save_str, hl_idx)
+            save_file = plot_folder + '/emb-layer={}{}.png'.format(hl_idx, suffix)
             title = 'Embedding, clust layer-{}, id_lam/l1_lam={:3.2E}/{:3.2E}'.format(hl_idx, id_lam[hl_idx], l1_lam[hl_idx]) 
             plot_fn(plot_dict['emb'], clusts, save_file, title) 
         if '_colnames' in data.__dict__ and FLAGS.dataset in utils.CYTOF_DATASETS and len(np.unique(clusts)) > 1:
-            save_file = plot_folder + '/heatmap-{}layer={}.png'.format(save_str, hl_idx)
+            save_file = plot_folder + '/heatmap-layer={}{}.png'.format(hl_idx, suffix)
             # plotting.plot_cluster_heatmap(plot_data, clusts, data._colnames, data._markers, save_file=save_file)
             plotting.plot_cluster_linkage_heatmap(plot_data, clusts, data._colnames, data._markers, save_file)
     if not heatmap_only:
         if labels is not None:
-            save_file = plot_folder + '/emb-{}labels.png'.format(save_str)
+            save_file = plot_folder + '/emb-labels{}.png'.format(suffix)
             title = 'Embedding, with true labels'
             plot_fn(plot_dict['emb'], labels, save_file, title)
         if cluster_layers == []:
             plot_fn(plot_dict['emb'], None, plot_folder + '/emb.png', 'Embedding, no clusters')
+    if FLAGS.dataset in utils.RNASEQ_DATASETS and recons in plot_dict:
+        if FLAGS.dataset == 'zika':
+            marker_sub = ['VIM', 'CDH1', 'CDH2', 'EZH2', 'SNAI1', 'ZEB1']
+            x_vars = ['VIM', 'SNAI1', 'CDH1']
+            y_vars = ['CDH1', 'EZH2', 'ZEB1', 'CDH2'],
+            recons_rnaseq = saucie_utils.inverse_transform(data, x=plot_dict['recons'])
+            save_file = plot_folder + '/edgeplots{}.png'.format(suffix)
+            plotting.plot_edge_plots(recons_rnaseq, data._colnames, marker_sub, x_vars, y_vars, title='Reconstructed edge plots', save_file=save_file)
     return
 
 

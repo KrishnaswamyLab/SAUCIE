@@ -32,6 +32,7 @@ SAVE_PATH = './saucie_models'
 
 DATETIME_FMT = '%y-%m-%d-runs'
 
+
 def load_model_from_config(dataset='mnist', config_path=SAVE_PATH+'/best.config'):
     if os.path.exists(config_path):
         with open(config_path, 'rb') as f:
@@ -49,8 +50,10 @@ def default_config(dataset='mnist'):
         input_dim = 784
     elif dataset == 'zika':
         input_dim = 35
-    elif dataset == 'emt_rnaseq':
+    elif dataset in utils.RNASEQ_DATASETS:
         input_dim = utils.RNASEQ_PCA_DIMS
+    elif dataset == 'toy100':
+        input_dim = 100
     config = OrderedDict(input_dim=input_dim, encoder_layers=[1024,512,256],
                          emb_dim=2, act_fn='tanh', d_act_fn='tanh', use_bias=True,
                          loss_fn='bce', opt_method='adam', lr=1e-3, batch_norm=True,
@@ -172,7 +175,7 @@ class Saucie():
         if not os.path.exists(self.save_path):
             os.makedirs(self.save_path)
         self.save_config()
-        self.epochs_trained = 0
+        epochs_trained = 0
 
     def __dict__(self):
         return self._model_config
@@ -182,29 +185,23 @@ class Saucie():
         with open(config_path, 'wb') as f:
             pickle.dump(self._model_config, f)
 
-    def restore_model(self, sess, ckpt_dir, ckpt_name='best.model'):
+    def restore_model(self, sess, ckpt_dir, ckpt_name=None):
         ckpt = tf.train.get_checkpoint_state(ckpt_dir, ckpt_name)
         if ckpt is None:
             return False
         else:
             self.saver.restore(sess, ckpt.model_checkpoint_path)
-            return True
+            return ckpt.model_checkpoint_path
 
     def save_model(self, sess, filename, step=None):
-        if filename != 'best.model':
-            if len(self.saver.last_checkpoints) == 5:
-                for ckpt in self.saver.last_checkpoints:
-                    if ckpt != self.save_path + '/best.model':
-                        break
-                for ckpt_file in glob.glob(ckpt + '*'):
-                    os.remove(ckpt_file)
-                self.saver.last_checkpoints.remove(ckpt)
         self.saver.save(sess, self.save_path + '/{}'.format(filename), global_step=step)
 
     def build(self, sess):
         self.sess = sess
+        self.graph = sess.graph
         self.x_ = tf.placeholder(utils.TF_FLOAT_DTYPE, shape=[None, self._input_dim], name='x')
         self.is_training_ = tf.placeholder(tf.bool, name='is_training')
+        self.train_id_ = tf.placeholder_with_default(True, shape=None, name='train_id')
         self.hidden_layers = []
 
         self.encoder
@@ -217,11 +214,11 @@ class Saucie():
 
         sess.run(tf.global_variables_initializer())
 
-        self.saver = tf.train.Saver(max_to_keep=5)
-        if os.path.exists(self.save_path + '/best.model'):
-            restored = self.restore_model(sess, self.save_path, 'best.model')
+        self.saver = tf.train.Saver(max_to_keep=6)
+        if os.path.exists(self.save_path + '/checkpoint'):
+            restored = self.restore_model(sess, self.save_path)
             if restored:
-                tf.logging.info('Restored model: {}'.format(self.save_path + '/best.model'))
+                tf.logging.info('Restored model: {}'.format(restored))
                 tf.logging.info('Already trained for {} steps, {} epochs'.format(*sess.run([self.global_step_, self.current_epoch_])))
 
         tf.logging.debug('Finished building SAUCIE')
@@ -274,7 +271,8 @@ class Saucie():
             act_fn = self._d_act_fn if i != 0 else None
             if type(self._d_act_fn) == list:
                 act_fn = self._d_act_fn[i]
-            x = self.add_layer(x, in_dim, out_dim, False, layer_name, # bn already computed for bottleneck layer
+            # bn already computed for bottleneck layer
+            x = self.add_layer(x, in_dim, out_dim, False, layer_name, 
                                act_fn, self._use_bias)
             in_dim = out_dim
         layer_name = 'reconstructed'
@@ -282,7 +280,7 @@ class Saucie():
         if self._loss_fn == 'bce':
             act_fn = 'sigmoid'
         else:
-            act_fn = self._d_act_fn
+            act_fn = ''
         reconstructed_ = self.add_layer(x, in_dim, out_dim, None, layer_name, act_fn,
                                         self._use_bias)
         return reconstructed_
@@ -314,10 +312,10 @@ class Saucie():
                     lam = id_lam[layer_idx]
                     layer = self.hidden_layers[layer_idx]
                     act_ = sparse_acts[act_idx]
-                    if layer.act_fn == 'relu':     # relu+softmax normalization
+                    if layer._act_fn == 'relu':     # relu+softmax normalization
                         act_ = ACT_FNS['softmax'](act_, name='normalized_act-{}'.format(layer_idx))
-                    elif layer.act_fn == 'tanh':   # tanh normalization
-                        act_ = (act_ + 1) / 2 
+                    elif layer._act_fn == 'tanh':   # tanh normalization
+                        act_ = (act_ + 1) / 2 # values put into 0, 1 range
                     id_name = 'id_loss_layer_{}'.format(layer_idx)
                     tf.add_to_collection('id_penalties', utils.id_penalty(act_, lam, id_name))
                     tf.add_to_collection('id_normalized_activations', act_)
@@ -356,7 +354,7 @@ class Saucie():
                     l2_w_name = 'l2_w_loss_layer_{}'.format(layer_idx)
                     tf.add_to_collection('l2_w_penalties', utils.l2_penalty(layer.w_, lam, l2_w_name))
                 l2_w_losses_ = tf.get_collection('l2_w_penalties')
-                l2_w_loss_ = tf.reduce_sum(l1_w_losses_, name='l2_w_loss')
+                l2_w_loss_ = tf.reduce_sum(l2_w_losses_, name='l2_w_loss')
                 loss_ += l1_w_loss_
             
         if len(l1_b_lam.nonzero()[0]) != 0:
@@ -378,7 +376,7 @@ class Saucie():
                     l2_b_name = 'l2_b_loss_layer_{}'.format(layer_idx)
                     tf.add_to_collection('l2_b_penalties', utils.l2_penalty(layer.b_, lam, l2_b_name))
                 l2_b_losses_ = tf.get_collection('l2_b_penalties')
-                l2_b_loss_ = tf.reduce_sum(l1_b_losses_, name='l2_b_loss')
+                l2_b_loss_ = tf.reduce_sum(l2_b_losses_, name='l2_b_loss')
                 loss_ += l2_b_loss_
 
         loss_ = tf.identity(loss_, name='combined_loss')
@@ -393,12 +391,18 @@ class Saucie():
             optimizer = tf.train.GradientDescentOptimizer(self._lr)
         self.global_step_ = tf.Variable(0, name='global_step', trainable=False)
         self.current_epoch_ = tf.Variable(0, name='current_epoch', trainable=False)
+        graph = self.graph
+        loss = tf.cond(self.train_id_,
+                       lambda: self.loss,
+                       lambda: self.recons_loss,
+                       name='optimize_loss')
+
         # used for batch norm calculations
         if self._batch_norm:
             update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
             with tf.control_dependencies(update_ops):
-                return optimizer.minimize(self.loss, self.global_step_)
-        return optimizer.minimize(self.loss, self.global_step_)
+                return optimizer.minimize(loss, self.global_step_)
+        return optimizer.minimize(loss, self.global_step_)
 
     def loss_tensors_dict(self, graph):
         used_id = len(self._sparse_config.id_lam.nonzero()[0]) != 0.
@@ -471,7 +475,7 @@ class Saucie():
             update_freq: number of steps before printing training loss
             saving_freq: number of steps before checkpointing model
         """
-        self.epochs_trained = data.epochs_trained = self.current_epoch_.eval(sess)
+        epochs_trained = data.epochs_trained = self.current_epoch_.eval(sess)
         graph = sess.graph
         loss_tensors = self.loss_tensors_dict(graph)
         train_ops = [loss_tensors, self.optimize]
@@ -487,20 +491,21 @@ class Saucie():
                 batch, labels = batch
             feed_dict = {self.x_: batch, self.is_training_: True}
             train_losses, _ = sess.run(train_ops, feed_dict=feed_dict)
-            log_str = (' epoch {}: step {}: '.format(self.epochs_trained, step)
+            log_str = (' epoch {}: step {}: '.format(epochs_trained, step)
                        + utils.make_dict_str(train_losses))
             tf.logging.log_every_n(tf.logging.INFO, log_str, update_freq)
             if (step % ckpt_freq) == 0:
                 self.save_model(sess, 'model', step=step)
-            if self.epochs_trained != data.epochs_trained:
-                self.epochs_trained = sess.run(tf.assign(self.current_epoch_, data.epochs_trained))
+            if epochs_trained != data.epochs_trained:
+                epochs_trained = sess.run(tf.assign(self.current_epoch_, data.epochs_trained))
                 test_losses = sess.run(test_ops, feed_dict=test_feed_dict)
-                log_str = (' test loss -- epoch {}: '.format(self.epochs_trained)
+                log_str = (' test loss -- epoch {}: '.format(epochs_trained)
                            + utils.make_dict_str(test_losses))
                 tf.logging.info(log_str)
-                if best_test_losses is None or best_test_losses['loss'] > test_losses['loss']:
+                if (best_test_losses is None or
+                        (best_test_losses['loss'] - test_losses['loss'] > 1e-4)):
                     self.saver.save(sess, self.save_path + '/best.model')
-                    tf.logging.info('Best model saved after {} epochs'.format(self.epochs_trained))
+                    tf.logging.info('Best model saved after {} epochs'.format(epochs_trained))
                     best_test_losses = test_losses
                     epochs_since_improved = 0
                 else:
@@ -509,7 +514,7 @@ class Saucie():
                     tf.logging.info('Early stopping, test loss did not improve for {} epochs'.format(epochs_since_improved))
                     break
 
-        tf.logging.info('Trained for {} epochs'.format(self.epochs_trained))
+        tf.logging.info('Trained for {} epochs'.format(epochs_trained))
         return test_losses
 
     def add_layer(self, x, in_dim, out_dim, batch_norm, name, act_fn, use_bias):

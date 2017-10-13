@@ -13,7 +13,7 @@ import glob
 import tensorflow as tf
 import os
 
-from sklearn.preprocessing import LabelEncoder
+from sklearn.preprocessing import LabelEncoder, MinMaxScaler
 from sklearn.model_selection import train_test_split
 from sklearn.metrics.pairwise import pairwise_distances
 from sklearn.metrics import mutual_info_score
@@ -27,18 +27,18 @@ from typing import NamedTuple
 
 RAND_SEED = 42
 CYTOF_DATASETS = {'flu', 'zika', 'emt_cytof'}
-RNASEQ_DATASETS = {'emt_rnaseq'}
+RNASEQ_DATASETS = {'emt_rnaseq', 'mouse'}
 FLOAT_DTYPE = np.float32
 TF_FLOAT_DTYPE = tf.as_dtype(FLOAT_DTYPE)
 EPS = FLOAT_DTYPE(1e-8)
-RNASEQ_PCA_DIMS = 20
+RNASEQ_PCA_DIMS = 15
 N_CLUSTS = [3, 7, 10]
 
 
 ########### MODEL/TENSORFLOW UTILS
 
 class SparseLayerConfig(NamedTuple): 
-    num_layers: int = 3
+    num_layers: int = 4
     id_lam:   np.array = np.zeros(num_layers, dtype=FLOAT_DTYPE)
     l1_lam:   np.array = np.zeros(num_layers, dtype=FLOAT_DTYPE)
     l1_w_lam: np.array = np.zeros(num_layers, dtype=FLOAT_DTYPE)
@@ -56,12 +56,12 @@ class SparseLayerConfig(NamedTuple):
     def __eq__(self, other):
         if isinstance(other, self.__class__):
             return (other.num_layers == self.num_layers and
-                    (other.id_lam == self.id_lam).all() and 
-                    (other.l1_lam == self.l1_lam).all() and
-                    (other.l1_w_lam == self.l1_w_lam).all() and 
-                    (other.l2_w_lam == self.l2_w_lam).all() and
-                    (other.l1_b_lam == self.l1_b_lam).all() and 
-                    (other.l2_b_lam == self.l2_b_lam).all())
+                    np.all(other.id_lam == self.id_lam) and 
+                    np.all(other.l1_lam == self.l1_lam) and
+                    np.all(other.l1_w_lam == self.l1_w_lam) and 
+                    np.all(other.l2_w_lam == self.l2_w_lam) and
+                    np.all(other.l1_b_lam == self.l1_b_lam) and 
+                    np.all(other.l2_b_lam == self.l2_b_lam))
         return False
 
     def __ne__(self, other):
@@ -77,20 +77,28 @@ def binary_crossentropy(predicted, actual, name='binary_crossentropy_error'):
                            + (1 - actual) * tf.log(1 - predicted + EPS), name=name)
 
 
-def binarize(acts, thresh=.5):
+def binarize(acts, thresh=.5, print_pct=0.01, bin_min=0.01):
+    if type(bin_min) == float and bin_min > 0 and bin_min < 1:
+        bin_min = len(acts) * bin_min
+
     binarized = np.where(acts>thresh, 1, 0)
     unique_rows = np.vstack({tuple(row) for row in binarized})
     num_clusters = unique_rows.shape[0]
     new_labels = np.zeros(acts.shape[0])
+    excluded_pts = 0
 
     if num_clusters > 1:
         print('Unique binary clusters: {}'.format(num_clusters))
         for i, row in enumerate(unique_rows[1:]):
             subs = np.where(np.all(binarized == row, axis=1))[0]
-            new_labels[subs] = i + 1
+            if bin_min and len(subs) < bin_min:
+                new_labels[subs] = -1
+                excluded_pts += len(subs)
+            else:
+                new_labels[subs] = i + 1
         uc, counts = np.unique(new_labels, return_counts=True)
-        print('Cluster counts (greater than 5% of points)')
-        print('\n'.join(['{},{}'.format(x,y) for x,y in zip(uc, counts) if y / len(acts) > .05]))
+        print('Cluster counts (greater than {}% of points), excluding {} points'.format(int(print_pct * 100), excluded_pts))
+        print('\n'.join(['{},{}'.format(x,y) for x,y in zip(uc, counts) if y / len(acts) > print_pct]))
     return new_labels
 
 
@@ -393,7 +401,7 @@ def load_dataset_from_mat(mat_file, data_key='data', label_key=None, colnames=No
         train_data, test_data = train_test_split(data, train_size=train_ratio, random_state=RAND_SEED)
         data_dict = dict(_data=train_data, _test_data=test_data, labeled=False)
     if colnames:
-        colnames = [x.strip() for x in open(colnames).readlines()]
+        colnames = np.array([x.strip() for x in open(colnames).readlines()])
         data_dict['_colnames'] = colnames
     return DataSet(**data_dict)
 
@@ -423,21 +431,38 @@ def load_dataset(dataset, data_path, labels=None, colnames=None, markers=None,
     if dataset in CYTOF_DATASETS:
         data._data = np.arcsinh(data._data / 5, dtype=FLOAT_DTYPE)
         data._test_data = np.arcsinh(data._test_data / 5, dtype=FLOAT_DTYPE)
-        data._data = data._data / data._data.max()
-        data._test_data = data._test_data / data._data.max()
-    elif dataset in RNASEQ_DATASETS:
+        ms = MinMaxScaler()
+        ms.fit(np.concatenate([data._data, data._test_data]))
+        data._data = ms.transform(data._data)
+        data._test_data = ms.transform(data._test_data)
+        data.__dict__['_max'] = ms.data_max_
+        data.__dict__['_min'] = ms.data_min_
+    elif dataset in RNASEQ_DATASETS and filetype != 'npz':
+        x = np.concatenate([data.data, data.test_data], axis=0)
+
+        # libsize normalization
+        x = np.clip(x, x.min(axis=0), np.percentile(x, 99.5, axis=0))
+
+        # PCA
         pca = PCA(RNASEQ_PCA_DIMS)
         print('Fitting PCA on data with shape: {}, may take awhile'.format(data.data.shape))
-        full_data = np.concatenate([data.data, data.test_data], axis=0)
-        full_data = pca.fit_transform(full_data)
+        x = pca.fit_transform(x)
         print('Done fitting PCA')
-        data._data = full_data[:len(data._data), :]
-        data._test_data = full_data[len(data._data):, :]
-        full_max, full_min = full_data.max(axis=0), full_data.min(axis=0)
-        data._data = (data._data - full_min) / (full_max - full_min)
-        data._test_data = (data._test_data - full_min) / (full_max - full_min)
-        data.__dict__['pca'] = pca
-        del full_data
+        data._data = x[:len(data._data)]
+        data._test_data = x[len(data._data):]
+        data.__dict__['_components'] = pca.components_
+        data.__dict__['_mean_offset'] = pca.mean_
+
+        """
+        # min-max scaling
+        ms = MinMaxScaler()
+        ms.fit(x)
+        data._data = ms.transform(data._data)
+        data._test_data = ms.transform(data._test_data)
+        data.__dict__['_max'] = ms.data_max_
+        data.__dict__['_min'] = ms.data_min_
+        """
+        del x
     if filetype != 'npz':
         if type(data_path) == str:
             data_path = data_path[:-4] + '.npz'
@@ -468,3 +493,13 @@ def activation_mutual_info(x, y, method='dist', k=None, bins=None):
         y_clust = k_means(x, k)[1]
         mi = mutual_info_score(x_clust, y_clust)
     return mi
+
+
+def rnaseq_inverse_transform(data, x=None):
+    if x == None:
+        x = np.concatenate([data._data, data._test_data])
+    if '_min' in data.__dict__ and '_max' in data.__dict__:
+        x = x * (data._max - data._min) + data._min
+    if '_components' in data.__dict__:
+        x = np.dot(x, data._components) + data._mean_offset
+    return data
