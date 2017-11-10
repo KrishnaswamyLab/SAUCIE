@@ -13,4 +13,5 @@
 *.sh
 *.txt
 checkpoint
-
+*.npz
+*.pdf

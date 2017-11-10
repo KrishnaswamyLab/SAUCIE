@@ -5,19 +5,15 @@ import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 import pandas as pd
 from matplotlib import offsetbox
-from loader import Loader, Loader_cytof_emt
+import loader
 from skimage.io import imsave
 from sklearn.manifold import TSNE
 from sklearn.metrics import adjusted_rand_score, silhouette_score
 from sklearn.decomposition import PCA
 from scipy.spatial.distance import pdist, squareform
 from skimage.io import imsave
-
 import seaborn as sns
-sns.set_style('dark')
-# sns.set_palette('muted')
-# sns.set_context("notebook", font_scale=1.5,
-#                 rc={"lines.linewidth": 2.5})
+
 
 def plot_mnist(args, X, y, X_embedded, name, min_dist=15.):
     fig, ax = plt.subplots(1,1, figsize=(10,10), frameon=False)
@@ -46,7 +42,10 @@ def plot_mnist(args, X, y, X_embedded, name, min_dist=15.):
             ax.add_artist(imagebox)
     fig.savefig(args.save_folder+'/embed_w_images'+name)
 
+def asinh(x):
+    f = np.vectorize(lambda y: math.asinh(y/5))
 
+    return f(x) 
 
 class SilentFile(object):
     def write(self, x): pass
@@ -85,21 +84,14 @@ def lrelu(x, leak=0.2, name="lrelu"):
 
   return tf.maximum(x, leak*x)
 
-def get_loader(args, load_full=True):
-    if args.data == 'MNIST':
-        loader = Loader(args)
-    elif args.data == 'cytof_emt':
-        loader = Loader_cytof_emt(args)
-    elif args.data == 'ZIKA':
-        loader = Loader(args, load_full)
-    elif args.data == 'FLU':
-        loader = Loader(args)
-    elif args.data == 'TOY':
-        loader = Loader(args)
-    else:
-        raise Exception("Couldn't parse name of data to use: {}".format(args.data))
+def get_loader(args):
+    try:
+        l =  getattr(loader, args.loader)
 
-    return loader
+    except:
+        raise Exception("Couldn't parse loader to use: {}".format(str(args.loader)))
+
+    return l(args)
 
 def tbn(name):
 
@@ -114,67 +106,117 @@ def to_one_hot(y, n):
     h[np.arange(y.shape[0]), y] = 1
     return h
 
-def get_layer(sess, loader, name, test_or_train='test'):
+def get_layer(sess, l, name):
     tensor = tbn(name)
     layer = []
     labels = []
-    for batch, batch_labels in loader.iter_batches(test_or_train):
+    for batch in l.iter_batches():
+        if isinstance(batch, tuple):
+            batch, batch_labels = batch
+            labels.append(batch_labels)
         
-        feed = {tbn('x:0'):batch, tbn('is_training:0'):False}
+        feed = {tbn('x:0'):batch}#, tbn('is_training:0'):False}
+        #feed = {tbn('x:0'):batch, tbn('batches:0'):batch_labels}
         [act] = sess.run([tensor], feed_dict=feed)
 
         layer.append(act)
-        labels.append(batch_labels)
+        
 
     layer = np.concatenate(layer, axis=0)
-    labels = np.concatenate(labels, axis=0)
-    return layer, labels
 
-def plot(args, data, labels, title, fn):
-    fig, ax = plt.subplots(1,1)
+    if labels:
+        labels = np.concatenate(labels, axis=0)
+        return layer, labels
+    else:
+        return layer
+
+def plot(args, data, labels=None, title='', fn='', alpha=.3, s=2, fig=None, ax=None, marker='o', cmap=plt.cm.jet):
+    if not fig:
+        fig, ax = plt.subplots(1,1)
     ax.set_title(title)
     ax.set_xticks([])
     ax.set_yticks([])
 
     if data.shape[1]>2:
+        print("Can't plot input with >2 dimensions...")
         return 
-        tsne = TSNE(verbose=2)
-        data = tsne.fit_transform(data)
 
-    colors = [plt.cm.jet(float(i)/len(np.unique(labels))) for i in range(len(np.unique(labels)))]
-    for index,lab in enumerate(np.unique(labels)):
-        inds = [True if l==lab else False for l in labels]
-        tmp_data = data[inds,:]
-        if lab==-1: continue
+    if labels is not None and len(np.unique(labels))>1:
+        r = list(range(data.shape[0]))
+        np.random.shuffle(r)
 
+        labels = labels[r]
+        data = data[r,:]
 
-        # ax.scatter(tmp_data[:,0], tmp_data[:,1], c=colors[int(index)], alpha=.3, s=5, marker='${}$'.format(index), label=int(lab))
-        ax.scatter(tmp_data[:,0], tmp_data[:,1], c=colors[int(index)], alpha=.3, s=2)
+        colors = [cmap(float(i)/(len(np.unique(labels-1)))) for i in range(len(np.unique(labels)))]
+        colors_ = [colors[int(l)] if l!=-1 else cm.Greys(.5) for l in labels]
 
-    # if args.data!='ZIKA':
-    #     lgnd = plt.legend(scatterpoints=1, prop={'size':6})
-    #     for lh in lgnd.legendHandles:
-    #         lh._sizes = [30]
-    #         lh.set_alpha(1)
+        if len(np.unique(labels)) == 1: colors_ = cm.Greys(.5)
 
-    fig.savefig( os.path.join(args.save_folder,fn), dpi=300)
+        ax.scatter(data[:,0], data[:,1], c=colors_, alpha=alpha, s=s, marker=marker)
+    
+    else:
+        ax.scatter(data[:,0], data[:,1], alpha=alpha, s=s, marker=marker, c=cmap(1.))
 
-    plt.close('all')
-    print("Plot saved to {}".format(fn))
+    if fn:
+        fig.savefig(os.path.join(args.save_folder,fn))
+        plt.close('all')
+        print("Plot saved to {}".format(fn))
 
-def activations_heatmap(args, sess, loader, layer, thresh=.5):
+def neuronuse_histogram(args, sess, loader, layer=None, neuronuse=None, ax=None):
+    if not isinstance(neuronuse, np.ndarray):
+        all_acts, all_labels = get_layer(sess, loader, 'layer_encoder_{}_activation:0'.format(layer))
+        all_acts = (all_acts+1) / 2.
+        neuronuse = all_acts.sum(axis=0)
+
+    if not ax:
+        fig, ax = plt.subplots(1,1, figsize=(5,5))
+    
+    ax.bar(range(len(neuronuse)), neuronuse, np.ones_like(neuronuse))
+
+    return neuronuse
+
+def activations_heatmap(args, sess, loader, layer, thresh=.5, ax=None, save=None):
     all_acts, all_labels = get_layer(sess, loader, 'layer_encoder_{}_activation:0'.format(layer))
 
     
-    nonzero = all_acts.reshape((-1))[all_acts.reshape((-1)) > 0]
+    #nonzero = all_acts.reshape((-1))[all_acts.reshape((-1)) > 0]
+    
+    if not ax:
+        fig, ax = plt.subplots(1,1, figsize=(5,5))
+    #ax.set_title('ID Regularization', fontsize=18)
+    #ax.set_xlabel('Activation', fontsize=18)
+    #ax.set_ylabel('Count', fontsize=18, labelpad=-10)
+    #ax.grid(linewidth=1, color='k', linestyle='--', alpha=.5)
+    #ax.set_axisbelow(False)
+    #ax.set_xticks([0,.5,1])
+    
+
+    n, bins = np.histogram(all_acts, bins=20)
+
+    bin_starts = bins[0:bins.size-1]
+    bin_widths = bins[1:bins.size] - bins[0:bins.size-1]
+    bin_starts = bin_starts + bin_widths/2. 
+    ax.bar(bin_starts,n,bin_widths)
+
+    if save:
+        fig.savefig(os.path.join(args.save_folder, 'layer_{}_activations_histogram.png'.format(layer)), format='png', dpi=600)
+
+    return
+
 
     if layer in args.layers_entropy:
         acts_normalized, labels = get_layer(sess, loader, 'normalized_activations_layer_{}:0'.format(layer))
         normalized_nonzero = acts_normalized.reshape((-1))#[acts_normalized.reshape((-1)) > 0]
-        fig, ax = plt.subplots(1,1, figsize=(10,10))
-        ax.set_title('ID Regularization')
-        ax.set_xlabel('Activation')
-        ax.set_ylabel('Log(Count)')
+        fig, ax = plt.subplots(1,1, figsize=(5,5))
+        ax.set_title('ID Regularization', fontsize=18)
+        ax.set_xlabel('Activation', fontsize=18)
+        ax.set_ylabel('Count', fontsize=18, labelpad=-10)
+        ax.grid(linewidth=1, color='k', linestyle='--', alpha=.5)
+        ax.set_axisbelow(False)
+        ax.set_xticks([0,.5,1])
+        
+        
 
         # ax.hist(np.log(normalized_nonzero), bins=1000)
         # ax.hist(normalized_nonzero, bins=1000)
@@ -183,16 +225,28 @@ def activations_heatmap(args, sess, loader, layer, thresh=.5):
         bin_widths = bins[1:bins.size] - bins[0:bins.size-1]
         ax.bar(bin_starts,np.log10(n),bin_widths)
         ax.set_ylim([0,10**6])
+        ax.set_xlim([0,1])
+        ax.set_yticks([10**2,10**4,10**6])
+        ax.set_yticklabels(['100', '10000', '1000000'])
 
-        fig.savefig(os.path.join(args.save_folder, 'layer_{}_activations_histogram'.format(layer)))
+        [tick.label.set_fontsize(6) for tick in ax.xaxis.get_major_ticks()]
+        [tick.label.set_fontsize(6) for tick in ax.yaxis.get_major_ticks()]
+        fig.subplots_adjust(right=.98)
+        fig.set_figheight(5)
+        fig.set_figwidth(5.3)
+        fig.savefig(os.path.join(args.save_folder, 'layer_{}_activations_histogram.png'.format(layer)), format='png', dpi=600)
     else:
-        acts_normalized = softmax(all_acts)
-
+        acts_normalized = all_acts
         fig, ax = plt.subplots(1,1, figsize=(10,10))
         fn = 'No regularization' if not (args.layers_entropy or args.layers_sparsity) else 'L1 Regularization'
-        ax.set_title(fn)
-        ax.set_xlabel('Activation')
-        ax.set_ylabel('Log(Count)')
+        ax.set_title(fn, fontsize=18)
+        ax.set_xlabel('Activation', fontsize=18)
+        ax.set_ylabel('Count', fontsize=18, labelpad=-10)
+        ax.grid(linewidth=1, color='k', linestyle='--', alpha=.5)
+        ax.set_axisbelow(False)
+        ax.set_xticks([0,.5,1])
+        [tick.label.set_fontsize(6) for tick in ax.xaxis.get_major_ticks()]
+        ax.set_xlim([0,1])
         
         # ax.hist(np.log(nonzero), bins=1000)
         # ax.hist(nonzero, bins=1000)
@@ -201,37 +255,35 @@ def activations_heatmap(args, sess, loader, layer, thresh=.5):
         bin_starts = bins[0:bins.size-1]
         bin_widths = bins[1:bins.size] - bins[0:bins.size-1]
         ax.bar(bin_starts,np.log10(n),bin_widths)
+        #[tick.label.set_fontsize(6) for tick in ax.yaxis.get_major_ticks()]
         ax.set_ylim([0,10**6])
+        ax.set_yticks([10**2,10**4,10**6])
+        ax.set_yticklabels(['100', '10000', '1000000'])
 
-        fig.savefig(os.path.join(args.save_folder, 'layer_{}_activations_histogram'.format(layer)))
-
-    
-
+        fig.subplots_adjust(right=.98)
+        fig.set_figheight(5)
+        fig.set_figwidth(5.3)
+        fig.savefig(os.path.join(args.save_folder, 'layer_{}_activations_histogram.png'.format(layer)), format='png', dpi=600)
 
         
-
+    return
 
     binarized = acts_normalized
     # binarized = np.where(acts_normalized>thresh, 1, 0)
-    fig, axes = plt.subplots(1,10, figsize=(20,5), dpi=150)
-    fig.subplots_adjust(hspace=.01, wspace=.02, left=0, right=1, top=1, bottom=.02)
+    fig, ax = plt.subplots(1,1, figsize=(10,10), dpi=150)
+    fig.subplots_adjust(hspace=0, wspace=0, left=0, right=1, top=1, bottom=0)
     all_argmaxes = np.zeros((10,10))
-    for i in range(10):
-        if args.data == 'MNIST':
-            # pick out this digit
-            all_this_digit = binarized[all_labels==i,:]
-        else:
-            all_this_digit = binarized[[ii*10+i for ii in range(10)],:]
+    for i in range(1):
         
         squaredims = int(math.floor(np.sqrt( args.layers[layer] )))
-        this_digit = all_this_digit.mean(axis=0)
+        this_digit = binarized[i,:]
         this_digit = this_digit[:squaredims**2].reshape((squaredims,squaredims))
-        ax = axes.flatten()[i]
-        ax.set_xlabel("{}".format(i), fontsize=14)
-        ax.imshow(this_digit, cmap='gray')
+        # ax = axes.flatten()[i]
+        # ax.set_xlabel("{}".format(i), fontsize=14)
+        ax.imshow(this_digit, cmap='gray', vmin=0, vmax=1)
         ax.set_xticklabels([])
         ax.set_yticklabels([])
-        ax.grid('off')
+        # ax.grid('off')
         ax.set_aspect('equal')
     fig.savefig(os.path.join(args.save_folder, 'layer_{}_activations_heatmap'.format(layer)))
     plt.close('all')
@@ -283,15 +335,17 @@ def calculate_loss(sess, loader, train_or_test='test'):
     avg_loss = sum(losses) / float(len(losses))
     return avg_loss
 
-def count_clusters(args, sess, loader, layer, thresh=.5, return_clusters=False, BIN_MIN=10):
+def count_clusters(args, sess, loader, layer, thresh=0, return_clusters=False, BIN_MIN=50):
     '''Counts the number of clusters after binarizing the activations of the given layer.'''
-    acts, labels = get_layer(sess, loader, 'normalized_activations_layer_{}:0'.format(layer))
+    #acts, labels = get_layer(sess, loader, 'normalized_activations_layer_{}:0'.format(layer))
+    acts, labels = get_layer(sess, loader, 'layer_encoder_{}_activation:0'.format(layer))
+
     unique_argmaxes, unique_argmaxes_counts = np.unique(acts.argmax(axis=1), return_counts=True)
     unique_argmaxes_counts = list(reversed(sorted(unique_argmaxes_counts.tolist())))
     # for i in range(len(unique_argmaxes)):
     #     if i>10: break
     #     print(unique_argmaxes[i], unique_argmaxes_counts[i])
-    print("Max neuron values: ", acts.max(axis=1)[:5], "...")
+    # print("Max neuron values: ", acts.max(axis=1)[:5], "...")
     # print("Number of unique max neurons: ", len(np.unique(acts.argmax(axis=1))))
 
 
@@ -303,28 +357,33 @@ def count_clusters(args, sess, loader, layer, thresh=.5, return_clusters=False, 
     # for i,row in enumerate(topk):
     #     for j in row:
     #         binarized[i,j] = 1
-    unique_rows = np.vstack({tuple(row) for row in binarized})
+    unique_rows, counts = np.unique(binarized, axis=0, return_counts=True)
+    unique_rows = unique_rows[counts>BIN_MIN]
+
+    #unique_rows = np.vstack({tuple(row) for row in binarized})
     num_clusters = unique_rows.shape[0]
+    print(num_clusters)
+    if num_clusters>5000:
+        print("Too many clusters to go through...")
+        return None, None
     
     num_clusters = 0
-    num_excluded = 0
-    new_labels = np.zeros(labels.shape)
+    rows_clustered = 0
+    new_labels = -1*np.ones(labels.shape)
     for i,row in enumerate(unique_rows):
+        if i and i%100==0:
+            print(i)
         rows_equal_to_this_code = np.where(np.all(binarized==row, axis=1))[0]
-        if len(rows_equal_to_this_code) < BIN_MIN:
-            new_labels[rows_equal_to_this_code] = -1
-            num_excluded+=len(rows_equal_to_this_code)
-            continue
+
         new_labels[rows_equal_to_this_code] = num_clusters
-        num_clusters+=1
-        # labels_code = labels[rows_equal_to_this_code]
-        # unique, counts = np.unique(labels_code, return_counts=True)
-        # print(np.array([unique,counts]).T)
+        num_clusters += 1
+        rows_clustered += rows_equal_to_this_code.shape[0]
 
-    print("---- Num clusters: {} ---- Pct clustered: {:.3f} ----".format(num_clusters, 1 - 1.*num_excluded/new_labels.shape[0]))
-    acts, _ = get_layer(sess, loader, 'layer_embedding_activation:0')
+    print("---- Num clusters: {} ---- Pct clustered: {:.3f} ----".format(num_clusters, 1.*rows_clustered/new_labels.shape[0]))
 
-    
+    if return_clusters:
+        return num_clusters, new_labels 
+
     new_labels_vals, new_labels_counts = np.unique(new_labels, return_counts=True)
     fig, ax = plt.subplots(1,1)
     ax.bar(range(len(new_labels_counts)), new_labels_counts.tolist())#list(reversed(sorted(new_labels_counts.tolist()))))
@@ -341,21 +400,6 @@ def count_clusters(args, sess, loader, layer, thresh=.5, return_clusters=False, 
 def calculate_randinds(labels1, labels2):
 
     return adjusted_rand_score(labels1, labels2)
-
-def calculate_modularity(x, labels, sigma):
-    labels = to_one_hot(labels, labels.max()+1)
-    pairwise_sq_dists = squareform(pdist(x, 'sqeuclidean'))
-    A = np.exp(-pairwise_sq_dists / sigma**2)
-    A = A - np.eye(x.shape[0])
-    k = A.sum(axis=0)
-    M = A.sum()
-    B = A - k.reshape((-1,1)).dot(k.reshape((1,-1))) / M
-    Q = np.trace(labels.T.dot(B).dot(labels)) / M
-    return Q
-
-def calculate_silhouette(x, labels):
-
-    return silhouette_score(x, labels)
 
 def calculate_confusion_matrix(true_labels, clusters):
     true_labels = true_labels[clusters!=-1]
@@ -406,3 +450,29 @@ def confusion_matrix(args, sess, loader, layer, clusters):
     ax.imshow(table.as_matrix(), cmap='jet')
     fig.savefig(args.save_folder + '/confusion_matrix_{}.png'.format(layer))
 
+def channel_by_cluster(args, sess, loader, layer):
+    x, labels = get_layer(sess, loader, 'x:0')
+    count, clusters = count_clusters(args, sess, loader, layer, thresh=.5, return_clusters=True)
+
+    x = x[clusters!=-1,:]
+    clusters = clusters[clusters!=-1]
+
+    df = pd.DataFrame(x)
+    df['cluster'] = clusters
+    grouped = df.groupby('cluster')
+    means = grouped.apply(lambda x: x.mean(axis=0))
+    del means['cluster']
+
+    with open('/home/krishnan/data/zika_data/gated/markers.csv') as f:
+        cols = f.read().strip()
+        cols = [c.strip().split('_')[1] for c in cols.split('\n')]
+
+    fig, ax = plt.subplots(1,1, figsize=(30,30))
+    plt.subplots_adjust(left=.1, bottom=.1, right=1, top=1)
+    ax.imshow(means.transpose(), cmap='jet')
+    ax.set_yticks(range(len(cols)))
+    ax.set_yticklabels(cols, fontsize=24)
+    ax.set_xticks([])
+    ax.set_ylabel('Marker', fontsize=28)
+    ax.set_xlabel('Cluster', fontsize=28)
+    fig.savefig(args.save_folder+'/means')

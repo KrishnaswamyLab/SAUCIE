@@ -1,9 +1,17 @@
 import os, sys, glob, math, io, contextlib, random
 import numpy as np
+import matplotlib.pyplot as plt
+import fcsparser
 from tensorflow.examples.tutorials.mnist import input_data
-np.random.seed(0)
+from sklearn.decomposition import PCA
+from sklearn.manifold import TSNE
+from sklearn.model_selection import train_test_split
+np.random.seed(1)
 
+def asinh(x):
+    f = np.vectorize(lambda y: math.asinh(y/5))
 
+    return f(x) 
 
 class SilentFile(object):
     def write(self, x): pass
@@ -16,210 +24,355 @@ def silence():
     sys.stdout = save_stdout
 
 class Loader(object):
-    def __init__(self, args, load_full=True):
-        self.batch_size = args.batch_size
-        self.args = args
-        self.asinh_transform = np.vectorize(lambda x: math.asinh(x/5))
-        if args.data == 'MNIST':
-            with silence():
-                self.mnist = input_data.read_data_sets("MNIST_data/", one_hot=False)
+    def next_batch(self, batch_size):
+        x = self.data
+        if 'labels' in dir(self): y = self.labels
 
-        if args.data == 'ZIKA':
-            colnames = []
-            with open(os.path.join(args.data_folder, 'colnames.csv')) as f: 
-                for line in f:
-                    line = line.strip()
-                    colnames.append(line)
+        if self.start + batch_size < x.shape[0]:
+            batch_x = x[self.start:self.start+batch_size]
 
-            cols_to_use = []
-            with open(os.path.join(args.data_folder, 'markers.csv')) as f:
-                for i,line in enumerate(f):
-                    line = line.strip()
-                    cols_to_use.append(colnames.index(line))
+            if 'labels' in dir(self): batch_y = y[self.start:self.start+batch_size]
 
-            self.cols_to_use = cols_to_use
+            self.start += batch_size
+        else:
+            self.epoch += 1
+            batch_x1 = x[self.start:,:]
+            batch_x2 = x[:batch_size - (x.shape[0]-self.start),:]
+            batch_x = np.concatenate([batch_x1, batch_x2], axis=0)
 
-            files = glob.glob(os.path.join(self.args.data_folder, '161913*'))
-            self.data = []
-            for f in files:
-                if any([f.find(name)>0 for name in ['markers','colnames','npz']]): continue
-                nrows = sys.maxsize
-                x = np.genfromtxt(f, delimiter=',', skip_header=1, usecols=self.cols_to_use)
-                x = self.asinh_transform(x)
-                self.data.append(x)
-                print(x.shape)
-           
-            self.data = np.concatenate(self.data, axis=0)
-            print(self.data.shape)
-            self.data = self.data / self.data.max()  
-            self.data = self.data[ZIKA_R]
-            self.data_test = self.data[-10000:,:]
-            self.data = self.data[:-10000,:]
-            
-            # self.data = DATA
-            # self.data_test = DATA_TEST
+            if 'labels' in dir(self):
+                batch_y1 = y[self.start:]
+                batch_y2 = y[:batch_size - (y.shape[0]-self.start)]
+                batch_y = np.concatenate([batch_y1, batch_y2], axis=0)
 
-        if args.data == 'FLU':
-            colnames = []
-            with open(os.path.join(args.data_folder, 'colnames.csv')) as f: 
-                for line in f:
-                    line = line.strip()
-                    colnames.append(line)
+            self.start = batch_size - (x.shape[0]-self.start)
 
-            cols_to_use = []
-            with open(os.path.join(args.data_folder, 'markers.csv')) as f:
-                for i,line in enumerate(f):
-                    line = line.strip()
-                    cols_to_use.append(colnames.index(line))
+        if 'labels' in dir(self):
+            return batch_x, batch_y
+        else:
+            return batch_x
 
-            self.cols_to_use = cols_to_use
-            files = glob.glob(os.path.join(self.args.data_folder, 'CD8', '*'))
-            self.data = []
-            for f in files:
-                x = np.genfromtxt(f, delimiter=',', usecols=self.cols_to_use, skip_header=1)
-                x = self.asinh_transform(x)
-                self.data.append(x)
-            self.data = np.concatenate(self.data, axis=0)
-            self.data = self.data / self.data.max()
-            r = list(range(self.data.shape[0]))
-            np.random.shuffle(r)
-            self.data = self.data[r]
-
-        if args.data == 'TOY':
-            N = 5000
-            D_big = 100
-            D_small = 20
-            N_clusters = 10
-            theta = 1
-
-            all_v = []
-            self.labels = []
-            for c in range(N_clusters):
-                v = np.zeros((D_big,N))
-                for i in range(D_small):
-                  v[c+i,:] = np.random.normal(c,1,[N])
-                all_v.append(v)
-                self.labels.append(c*np.ones(v.shape[1]))
-            all_v = np.concatenate(all_v, axis=1)
-
-            s = math.sin(theta)
-            c = math.cos(theta)
-            rotation_Ms = []
-            for rotation in range(D_big-1):
-              m = np.eye(D_big)
-              m[rotation,rotation] = c
-              m[rotation+1,rotation+1] = c
-              m[rotation,rotation+1] = -s
-              m[rotation+1,rotation] = s
-              rotation_Ms.append(m)
-
-            for m in rotation_Ms:
-              all_v = m.dot(all_v)
-
-            self.data = all_v.T
-            self.data = self.data - self.data.min()
-            self.data = self.data / self.data.max()
-            self.labels = np.concatenate(self.labels, axis=0)
-
-            self.test_order = list(range(self.data.shape[0]))
-            random.shuffle(self.test_order)
-            # self.data = DATA_TOY
-            # self.labels = LABELS_TOY
-            # self.test_order = TEST_ORDER_TOY
-
-    def iter_batches(self, train_or_test):
-        if self.args.data == 'MNIST':
-            return self.iter_batches_mnist(train_or_test)
-        elif self.args.data == 'ZIKA':
-            return self.iter_batches_zika(train_or_test)
-        elif self.args.data == 'FLU':
-            return self.iter_batches_flu(train_or_test)
-        elif self.args.data == 'TOY':
-            return self.iter_batches_toy(train_or_test)
-
-    def iter_batches_zika(self, train_or_test):
+    def iter_batches(self, epochs=1, train_or_test='train', max_iters=None):
         if train_or_test=='train':
             x = self.data
+            if 'labels' in dir(self):
+                y = self.labels
         else:
             x = self.data_test
+            if 'labels_test' in dir(self):
+                y = self.labels_test
 
-        for i in range(math.floor(x.shape[0]/self.batch_size)):
-            start = i*self.batch_size
-            end = (i+1)*self.batch_size
-            yield x[start:end,:], np.zeros(self.args.batch_size)
-                    
-    def iter_batches_mnist(self, train_or_test):
-        if train_or_test=='train':
-            x = self.mnist.train.images
-            y = self.mnist.train.labels
-        elif train_or_test=='test':
-            x = self.mnist.test.images
-            y = self.mnist.test.labels
+        for epoch in range(epochs):
+            for i in range(x.shape[0]//self.args.batch_size):
+                start = i*self.args.batch_size
+                end = (i+1)*self.args.batch_size
+                
+                if 'labels' in dir(self):
+                    yield x[start:end,:], y[start:end]
+                else:
+                    yield x[start:end,:]
 
-        #x = x / 255.   tf already scales it
-        if train_or_test=='train':
-            r = list(range(x.shape[0]))
+                if max_iters and i>max_iters: return
+
+class LoaderMNIST(Loader):
+    data = None
+    labels = None
+    data_test = None
+    labels_test = None
+    data_folder = "MNIST_data/"
+
+    def __init__(self, args, shuffle=False):
+        self.args = args
+        self.start = 0
+        self.epoch = 0
+
+        if not isinstance(self.data, np.ndarray):
+            self.load_data(shuffle)
+
+    def load_data(self, shuffle):
+        with silence():
+            mnist = input_data.read_data_sets(self.data_folder, one_hot=False)
+
+            data = mnist.train.images
+            labels = mnist.train.labels
+
+            r = list(range(len(labels)))
             np.random.shuffle(r)
-            x = x[r,:]
-            y = y[r]
+            data = data[r,:]
+            labels = labels[r]
 
-        for i in range(math.floor(x.shape[0]/self.batch_size)):
-            start = i*self.batch_size
-            end = (i+1)*self.batch_size
+            LoaderMNIST.data = data
+            LoaderMNIST.labels = labels
 
-            x_batch = x[start:end,:]
-            y_batch = y[start:end]
-            
-            yield x_batch,y_batch
+            LoaderMNIST.data_test = mnist.test.images
+            LoaderMNIST.labels_test = mnist.test.labels
 
-    def iter_batches_flu(self, train_or_test):
-        x = self.data
-        for i in range(math.floor(x.shape[0]/self.batch_size)):
-            start = i*self.batch_size
-            end = (i+1)*self.batch_size
-            yield x[start:end,:], np.zeros(self.args.batch_size)
-            if train_or_test=='test' and end>10000:
-                break
+class LoaderZika(Loader):
+    data = None
+    labels = None
+    data_folder = '/home/krishnan/data/zika_data/gated'
 
-    def iter_batches_toy(self, train_or_test):
-        if train_or_test == 'test':
-            x = self.data[self.test_order,:]
-            y = self.labels[self.test_order]
-        else:
-            r = list(range(self.data.shape[0]))
-            random.shuffle(r)
-            x = self.data[r,:]
-            y = self.labels[r]
+    def __init__(self, args, shuffle=False):
+        self.args = args
+        self.start = 0
+        self.epoch = 0
 
-        for i in range(math.floor(x.shape[0]/self.batch_size)):
-            start = i*self.batch_size
-            end = (i+1)*self.batch_size
-            yield x[start:end,:], y[start:end]
-            if train_or_test=='test' and end>10000:
-                break
+        if not isinstance(self.data, np.ndarray):
+            self.load_data(shuffle)
 
-class Loader_cytof_emt(object):
+    def load_data(self, shuffle):
+        colnames = [line.strip() for line in open(os.path.join(self.data_folder, 'colnames.csv'))] 
+        cols_to_use = [colnames.index(line.strip()) for line in open(os.path.join(self.data_folder, 'markers.csv'))] 
+
+
+        # files = glob.glob(os.path.join(self.data_folder, '161913*'))
+        # data = []
+        # labels = []
+        # for i,f in enumerate(files):
+        #     if any([f.find(name)>0 for name in ['markers','colnames','npz']]): continue
+        #     print(f)
+        #     x = np.genfromtxt(f, delimiter=',', skip_header=1, usecols=cols_to_use, max_rows=75000)
+        #     x = asinh(x)
+
+        #     data.append(x)
+        #     labels.append(i*np.ones(x.shape[0]))
+        #     print(x.shape)
+
+
+        files = ['/data/kevin/Zika_Cytof/GatedData/Spike-in_LIVE_151548ZIKV_04May2017_01_splorm_0_normalized.fcs', 
+                 '/data/kevin/Zika_Cytof/GatedData/Spike-in_LIVE_151550ZIKV_10May2017_01_splorm_0_normalized.fcs']#,
+                 # '/data/kevin/Zika_Cytof/GatedData/Spike-in_LIVE_151553ZIKV_27April2017_01_splorm_0_normalized.fcs',
+                 # '/data/kevin/Zika_Cytof/GatedData/Sample_LIVE_151548ZIKV_04May2017_01_splorm_0_normalized.fcs']
+        data = []
+        labels = []
+        for i,f in enumerate(files):
+            meta, x = fcsparser.parse(f, reformat_meta=True)
+            x = x.as_matrix()[:,cols_to_use]
+            x = asinh(x)
+            print(x.shape)
+            data.append(x)
+            labels.append(i*np.ones(x.shape[0]))
+       
+
+
+        data = np.concatenate(data, axis=0)
+        labels = np.concatenate(labels, axis=0)
+
+        r = list(range(len(labels)))
+        np.random.shuffle(r)
+        data = data[r,:]
+        labels = labels[r]
+
+        LoaderZika.data = data
+        LoaderZika.labels = labels
+
+class LoaderGMM(Loader):
+    data = None
+    labels = None
+    data_test = None
+    labels_test = None
+
     def __init__(self, args):
-        self.x = np.loadtxt(os.path.join(args.data_folder, 'emt_data.csv'), delimiter=',')
-        with open(os.path.join(args.data_folder, 'channels.csv')) as f:
-            self.columns = f.read().strip().split(',')
-        self.batch_size = args.batch_size
+        self.args = args
+        self.start = 0
+        self.epoch = 0
+        if not isinstance(self.data, np.ndarray):
+            self.load_data()
 
-        # self.x = (self.x + self.x.min())
-        # self.x = self.x / self.x.max()
+    def load_data(self, n_pts=5000, n_clusters=4, theta=1, D_big=100, D_small=10):
+        print("Loading data...")
+        all_v = []
+        labels = []
 
-    def iter_batches(self, train_or_test):
-        x = self.x
+        partition_dim = D_big // (n_clusters*2)
+        for c in range(n_clusters*2):
 
-        if train_or_test=='train':
-            r = list(range(self.x.shape[0]))
-            np.random.shuffle(r)
-            x = self.x[r,:]
+            v = np.zeros((D_big,n_pts))
+            mean = np.random.uniform(1,1,[partition_dim])
+            cov = np.diag(np.ones((partition_dim))) #np.random.uniform(1,1,[25,25])
+            v[partition_dim*c:partition_dim*(c+1),:] = np.random.multivariate_normal(mean,cov,(n_pts)).T
+            all_v.append(v)
+            labels.append((c%n_clusters)*np.ones(v.shape[1]))
+            #labels.append(c*np.ones(v.shape[1]))
+        all_v = np.concatenate(all_v, axis=1)
 
-        for i in range(math.floor(x.shape[0]/self.batch_size)):
-            start = i*self.batch_size
-            end = (i+1)*self.batch_size
+        s = math.sin(theta)
+        c = math.cos(theta)
+        rotation_Ms = []
+        for rotation in range(D_big-1):
+          m = np.eye(D_big)
+          m[rotation,rotation] = c
+          m[rotation+1,rotation+1] = c
+          m[rotation,rotation+1] = -s
+          m[rotation+1,rotation] = s
+          rotation_Ms.append(m)
 
-            x_batch = x[start:end,:]
+
+        for m in rotation_Ms:
+          all_v = m.dot(all_v)
+
+        data = all_v.T
+        labels = np.concatenate(labels, axis=0)
+        #data = data - data.mean()
+        #data = data / data.std()
+
+        r = list(range(len(labels)))
+        np.random.shuffle(r)
+        data = data[r,:]
+        labels = labels[r]
+        LoaderGMM.data = data
+        LoaderGMM.labels = labels
+
+class LoaderGMM2D(Loader):
+    data = None
+    labels = None
+
+    def __init__(self, args):
+        self.args = args
+
+        if not isinstance(self.data, np.ndarray):
+            self.load_data()
+
+    def load_data(self, n_pts=5000, dims=2, n_clusts=4):
+        clusts = []
+        labels = []
+        for c in range(n_clusts):
+            clust = np.random.multivariate_normal([((-1)**c)*5*c,((-1)**c)*5*c],[[c+.1,c],[c,c+.1]],(n_pts))
+            labs = c*np.ones((n_pts))
+            clusts.append(clust)
+            labels.append(labs)
+        clusts = np.concatenate(clusts, axis=0)
+        labels = np.concatenate(labels, axis=0)
+
+        r = list(range(len(labels)))
+        np.random.shuffle(r)
+        clusts = clusts[r,:]
+        labels = labels[r]
+
+        LoaderGMM2D.data = clusts
+        LoaderGMM2D.labels = labels
+
+class LoaderToy(Loader):
+    data = None
+    labels = None
+
+    def __init__(self, args):
+        self.args = args
+
+        if not isinstance(self.data, np.ndarray):
+            self.load_data()
+
+    def load_data(self):
+        N = 5000
+        D_big = 100
+        D_small = 20
+        N_clusters = 10
+        theta = 1
+
+        all_v = []
+        labels = []
+        for c in range(N_clusters):
+            v = np.zeros((D_big,N))
+            for i in range(D_small):
+              v[c+i,:] = np.random.normal(c,1,[N])
+            all_v.append(v)
+            labels.append(c*np.ones(v.shape[1]))
+        all_v = np.concatenate(all_v, axis=1)
+
+        s = math.sin(theta)
+        c = math.cos(theta)
+        rotation_Ms = []
+        for rotation in range(D_big-1):
+          m = np.eye(D_big)
+          m[rotation,rotation] = c
+          m[rotation+1,rotation+1] = c
+          m[rotation,rotation+1] = -s
+          m[rotation+1,rotation] = s
+          rotation_Ms.append(m)
+
+        for m in rotation_Ms:
+          all_v = m.dot(all_v)
+
+        data = all_v.T
+        data = data - data.min()
+        data = data / data.max()
+        labels = np.concatenate(labels, axis=0)
+
+        r = list(range(data.shape[0]))
+        random.shuffle(r)
+        data = data[r,:]
+        labels = labels[r]
+
+
+        LoaderToy.data = data
+        LoaderToy.labels = labels
+
+
+class LoaderToy2(Loader):
+    data = None
+    labels = None
+
+    def __init__(self, args):
+        self.args = args
+
+        if not isinstance(self.data, np.ndarray):
+            self.load_data()
+
+    def load_data(self):
+        N = 5000
+        D_big = 100
+        D_small = 2
+        N_clusters = 10
+        theta = 1
+
+        all_v = []
+        labels = []
+        for c in range(2,N_clusters+2):
+            v = np.zeros((D_big,N))
+ 
+            # v[0,:] = [1.*x/v.shape[1] for x in range(v.shape[1])]
+            # v[1,:] = [x**3 for x in v[0,:]]
+
+            v[:,:] = np.random.multivariate_normal([c,c], [[1,.5],[.5,1]], (N)).T
+            #v[:,:] = np.random.multivariate_normal([c*2,c*.5], [[c,.5*c],[.1*c,c]], (N)).T
             
-            yield x_batch, np.zeros(x_batch.shape[0])
+            all_v.append(v)
+            labels.append((c-2)*np.ones(v.shape[1]))
+        all_v = np.concatenate(all_v, axis=1)
+
+        s = math.sin(theta)
+        c = math.cos(theta)
+        rotation_Ms = []
+        for rotation in range(D_big-1):
+          m = np.eye(D_big)
+          m[rotation,rotation] = c
+          m[rotation+1,rotation+1] = c
+          m[rotation,rotation+1] = -s
+          m[rotation+1,rotation] = s
+          rotation_Ms.append(m)
+
+        for m in rotation_Ms:
+          all_v = m.dot(all_v)
+
+        data = all_v.T
+        data = data - data.min()
+        data = data / data.max()
+        labels = np.concatenate(labels, axis=0)
+
+        r = list(range(data.shape[0]))
+        random.shuffle(r)
+        data = data[r,:]
+        labels = labels[r]
+
+
+        LoaderToy2.data = data
+        LoaderToy2.labels = labels
+
+
+
+
+
+
+
+
+
