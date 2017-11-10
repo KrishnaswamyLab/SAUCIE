@@ -2,6 +2,7 @@ import os, sys, glob, math, io, contextlib, random
 import numpy as np
 import matplotlib.pyplot as plt
 import fcsparser
+import scipy.io
 from tensorflow.examples.tutorials.mnist import input_data
 from sklearn.decomposition import PCA
 from sklearn.manifold import TSNE
@@ -24,6 +25,13 @@ def silence():
     sys.stdout = save_stdout
 
 class Loader(object):
+    def __init__(self, args):
+        self.args = args
+        self.start = 0
+        self.epoch = 0
+        if not isinstance(self.data, np.ndarray):
+            self.load_data()
+
     def next_batch(self, batch_size):
         x = self.data
         if 'labels' in dir(self): y = self.labels
@@ -73,6 +81,8 @@ class Loader(object):
                     yield x[start:end,:]
 
                 if max_iters and i>max_iters: return
+
+
 
 class LoaderMNIST(Loader):
     data = None
@@ -223,150 +233,24 @@ class LoaderGMM(Loader):
         LoaderGMM.data = data
         LoaderGMM.labels = labels
 
-class LoaderGMM2D(Loader):
+class LoaderMouse(Loader):
     data = None
     labels = None
-
-    def __init__(self, args):
-        self.args = args
-
-        if not isinstance(self.data, np.ndarray):
-            self.load_data()
-
-    def load_data(self, n_pts=5000, dims=2, n_clusts=4):
-        clusts = []
-        labels = []
-        for c in range(n_clusts):
-            clust = np.random.multivariate_normal([((-1)**c)*5*c,((-1)**c)*5*c],[[c+.1,c],[c,c+.1]],(n_pts))
-            labs = c*np.ones((n_pts))
-            clusts.append(clust)
-            labels.append(labs)
-        clusts = np.concatenate(clusts, axis=0)
-        labels = np.concatenate(labels, axis=0)
-
-        r = list(range(len(labels)))
-        np.random.shuffle(r)
-        clusts = clusts[r,:]
-        labels = labels[r]
-
-        LoaderGMM2D.data = clusts
-        LoaderGMM2D.labels = labels
-
-class LoaderToy(Loader):
-    data = None
-    labels = None
-
-    def __init__(self, args):
-        self.args = args
-
-        if not isinstance(self.data, np.ndarray):
-            self.load_data()
 
     def load_data(self):
-        N = 5000
-        D_big = 100
-        D_small = 20
-        N_clusters = 10
-        theta = 1
-
-        all_v = []
+        print("Loading data...")
+        fns = ['/data/krishnan/mouse_data2/p3/matrix.mtx', '/data/krishnan/mouse_data2/rm3/matrix.mtx']
+        data = []
         labels = []
-        for c in range(N_clusters):
-            v = np.zeros((D_big,N))
-            for i in range(D_small):
-              v[c+i,:] = np.random.normal(c,1,[N])
-            all_v.append(v)
-            labels.append(c*np.ones(v.shape[1]))
-        all_v = np.concatenate(all_v, axis=1)
-
-        s = math.sin(theta)
-        c = math.cos(theta)
-        rotation_Ms = []
-        for rotation in range(D_big-1):
-          m = np.eye(D_big)
-          m[rotation,rotation] = c
-          m[rotation+1,rotation+1] = c
-          m[rotation,rotation+1] = -s
-          m[rotation+1,rotation] = s
-          rotation_Ms.append(m)
-
-        for m in rotation_Ms:
-          all_v = m.dot(all_v)
-
-        data = all_v.T
-        data = data - data.min()
-        data = data / data.max()
+        for i,fn in enumerate(fns):
+            data.append(scipy.io.mmread(fn))
+            labels.append(i*np.ones((data[-1].shape[1])))
+        data = np.concatenate([d.todense() for d in data], axis=1)
+        data = asinh(data)
         labels = np.concatenate(labels, axis=0)
 
-        r = list(range(data.shape[0]))
-        random.shuffle(r)
-        data = data[r,:]
-        labels = labels[r]
-
-
-        LoaderToy.data = data
-        LoaderToy.labels = labels
-
-
-class LoaderToy2(Loader):
-    data = None
-    labels = None
-
-    def __init__(self, args):
-        self.args = args
-
-        if not isinstance(self.data, np.ndarray):
-            self.load_data()
-
-    def load_data(self):
-        N = 5000
-        D_big = 100
-        D_small = 2
-        N_clusters = 10
-        theta = 1
-
-        all_v = []
-        labels = []
-        for c in range(2,N_clusters+2):
-            v = np.zeros((D_big,N))
- 
-            # v[0,:] = [1.*x/v.shape[1] for x in range(v.shape[1])]
-            # v[1,:] = [x**3 for x in v[0,:]]
-
-            v[:,:] = np.random.multivariate_normal([c,c], [[1,.5],[.5,1]], (N)).T
-            #v[:,:] = np.random.multivariate_normal([c*2,c*.5], [[c,.5*c],[.1*c,c]], (N)).T
-            
-            all_v.append(v)
-            labels.append((c-2)*np.ones(v.shape[1]))
-        all_v = np.concatenate(all_v, axis=1)
-
-        s = math.sin(theta)
-        c = math.cos(theta)
-        rotation_Ms = []
-        for rotation in range(D_big-1):
-          m = np.eye(D_big)
-          m[rotation,rotation] = c
-          m[rotation+1,rotation+1] = c
-          m[rotation,rotation+1] = -s
-          m[rotation+1,rotation] = s
-          rotation_Ms.append(m)
-
-        for m in rotation_Ms:
-          all_v = m.dot(all_v)
-
-        data = all_v.T
-        data = data - data.min()
-        data = data / data.max()
-        labels = np.concatenate(labels, axis=0)
-
-        r = list(range(data.shape[0]))
-        random.shuffle(r)
-        data = data[r,:]
-        labels = labels[r]
-
-
-        LoaderToy2.data = data
-        LoaderToy2.labels = labels
+        LoaderMouse.data = data
+        LoaderMouse.labels = labels
 
 
 

@@ -226,9 +226,7 @@ class SAUCIE(object):
                     self.loss_entropy += lambda_entropy*tf.reduce_sum(-normalized*tf.log(normalized+1e-9))
 
         self.loss_entropy = nameop(self.loss_entropy, 'loss_entropy')
-        #tf.add_to_collection('losses', self.loss_entropy)
-        trainop = tf.train.AdamOptimizer().minimize(self.loss_entropy, name='entropy_op', var_list=[v for v in tf.global_variables() if 'encoder_2' in v.name])
-        #nameop(trainop, 'entropy_op')
+        tf.add_to_collection('losses', self.loss_entropy)
 
     def _build_reg_mmd(self):
         var_within = {}
@@ -401,8 +399,6 @@ class SAUCIE(object):
             if self.args.batchcorrection=='adversary':
                 _ = self.sess.run([obn('train_op_adversary')], feed_dict=feed)
 
-            if self.iteration>1000 and self.iteration%5==0:
-                _ = self.sess.run([obn('entropy_op')], feed_dict=feed)
             _ = self.sess.run([obn('train_op')], feed_dict=feed)
 
     def get_loss(self, load):
