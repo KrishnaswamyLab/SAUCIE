@@ -1,7 +1,7 @@
 import tensorflow as tf
 import numpy as np
 from tensorflow.contrib.layers import batch_norm as bn
-import sys, os, time, math, argparse
+import sys, os, time, math, argparse, pickle
 import matplotlib.pyplot as plt
 from tensorflow.contrib.layers import xavier_initializer
 from utils import *
@@ -35,21 +35,41 @@ class Layer(object):
         return h
 
 class SAUCIE(object):
-    def __init__(self, args):
-        self.args = args
-        self.x = tf.placeholder(tf.float32, shape=[None, args.input_dim], name='x')
-        self.y = tf.placeholder(tf.float32, shape=[None, args.input_dim], name='y')
-        self.batches = tf.placeholder(tf.int32, shape=[None], name='batches')
-        self.is_training = tf.placeholder(tf.bool, shape=[], name='is_training')
-        self.learning_rate = tf.placeholder(tf.float32, shape=[], name='learning_rate')
+    def __init__(self, args, scope='', restore_folder=None, debug=False, pretrain_steps=0):
+        if restore_folder:
+            self._restore(restore_folder)
+            return 
 
-        self._build()
-        gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction=0.45)
-        self.sess = tf.Session(config=tf.ConfigProto(gpu_options=gpu_options)) 
-        self.graph_init(self.sess)
+        self.scope = scope
+        self.debug = debug
+        self.pretrain_steps = pretrain_steps
+        with tf.variable_scope(scope):
+            self.args = args
+            self.x = tf.placeholder(tf.float32, shape=[None, args.input_dim], name='x')
+            self.y = tf.placeholder(tf.float32, shape=[None, args.input_dim], name='y')
+            self.batches = tf.placeholder(tf.int32, shape=[None], name='batches')
+            self.is_training = tf.placeholder(tf.bool, shape=[], name='is_training')
+            self.learning_rate = tf.placeholder(tf.float32, shape=[], name='learning_rate')
 
-        self.iteration = 0
-        
+            self._build()
+            gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction=0.45)
+            self.sess = tf.Session(config=tf.ConfigProto(gpu_options=gpu_options)) 
+            self.graph_init(self.sess)
+
+            self.iteration = 0
+       
+    def _restore(self, restore_folder):
+        tf.reset_default_graph()
+
+        # with open('{}/args.pkl'.format(restore_folder), 'rb') as f:
+        #     args = pickle.load(f)
+
+        self.sess = tf.Session()
+        ckpt = tf.train.get_checkpoint_state(restore_folder)
+        self.saver = tf.train.import_meta_graph('{}.meta'.format(ckpt.model_checkpoint_path))
+        self.saver.restore(self.sess, ckpt.model_checkpoint_path)
+        print("Model restored from {}".format(restore_folder))
+
     def _build(self):
         self._build_encoder()
 
@@ -113,25 +133,53 @@ class SAUCIE(object):
         print(self.reconstructed)
 
     def _build_losses(self):
-        if self.args.lambda_batchcorrection:
-            self._build_reconstruction_loss_mmd(self.reconstructed, self.x)
-        else:
-            self._build_reconstruction_loss(self.reconstructed, self.x)
-        self._build_reg_clustuse()
-        self._build_reg_sparsity()
-        self._build_reg_entropy()
-        if self.args.batchcorrection=='mmd':
-            self._build_reg_mmd()
-        elif self.args.batchcorrection=='adversary':
-            self._build_reg_adversary()
-        self._build_reg_l1weights()
-        self._build_reg_l2weights()
+
+        self.loss_pretraining = tf.reduce_mean((self.reconstructed-self.x)**2)
+        nameop(self.loss_pretraining, 'loss_pretraining')
+        self.loss_recon = 0.
+
+
+        with tf.variable_scope('reconstruction'):
+            if self.args.lambda_batchcorrection:
+                self._build_reconstruction_loss_mmd(self.reconstructed, self.x)
+            else:
+                self._build_reconstruction_loss(self.reconstructed, self.x)
+
+        with tf.variable_scope('clustuse'):
+            self._build_reg_clustuse()
+
+        with tf.variable_scope('sparsity'):
+            self._build_reg_sparsity()
+
+        with tf.variable_scope('entropy'):
+            self._build_reg_entropy()
+
+        with tf.variable_scope('mmd'):
+
+            if self.args.batchcorrection=='mmd':
+                self._build_reg_mmd()
+            elif self.args.batchcorrection=='adversary':
+                self._build_reg_adversary()
+
+        with tf.variable_scope('l1/l2'):
+            self._build_reg_l1weights()
+            self._build_reg_l2weights()
+
         self._build_total_loss()
 
     def _build_optimization(self):
         opt = tf.train.AdamOptimizer(self.learning_rate)
         tvs = [v for v in tf.global_variables() if 'adversary' not in v.name]
-        self.train_op = opt.minimize(self.loss, name='train_op', var_list=tvs)
+
+        tv_vals = opt.compute_gradients(self.loss, var_list=tvs)
+        #capped_tvs = [(tf.clip_by_norm(grad, 5.), var) for grad, var in tvs]
+        self.train_op = opt.apply_gradients(tv_vals, name='train_op')
+
+        tv_vals_pretrain = opt.compute_gradients(self.loss_pretraining, var_list=tvs)
+        #capped_tvs = [(tf.clip_by_norm(grad, 5.), var) for grad, var in tvs]
+        self.pretrain_op = opt.apply_gradients(tv_vals_pretrain, name='pretrain_op')
+
+        #self.train_op = opt.minimize(self.loss, name='train_op', var_list=tvs)
 
     def _build_reconstruction_loss(self, reconstructed, y):
         if self.args.loss=='mse':
@@ -146,31 +194,34 @@ class SAUCIE(object):
         tf.add_to_collection('losses', self.loss_recon)
 
     def _build_reconstruction_loss_mmd(self, reconstructed, x):
-        x_dists = self.pairwise_dists(x, x)
-        x_dists = tf.sqrt(x_dists+1e-3)
-        #x_dists = self.rbf_kernel(x_dists)
-        #x_dists = x_dists * tf.transpose(x_dists)
-        recon_dists = self.pairwise_dists(reconstructed, reconstructed)
-        recon_dists = tf.sqrt(recon_dists+1e-3)
-        #recon_dists = self.rbf_kernel(recon_dists)
-        #recon_dists = recon_dists * tf.transpose(recon_dists)
+        with tf.variable_scope('pairwise_dists'):
+            x_dists = self.pairwise_dists(x, x)
+            #x_dists = tf.sqrt(x_dists+1e-3)
+            #x_dists = self.rbf_kernel(x_dists)
+            # x_dists = x_dists * tf.transpose(x_dists)
+            recon_dists = self.pairwise_dists(reconstructed, reconstructed)
+            #recon_dists = tf.sqrt(recon_dists+1e-3)
+            #recon_dists = self.rbf_kernel(recon_dists)
+            # recon_dists = recon_dists * tf.transpose(recon_dists)
 
-        self.loss_recon = 0.
 
         for i in range(self.args.num_batches):
-            if i==0:
-                recon_ = tf.boolean_mask(reconstructed, tf.equal(self.batches, i))
-                x_ = tf.boolean_mask(x, tf.equal(self.batches, i))
-                l = tf.abs(x_-recon_)
-                self.loss_recon+= tf.reduce_mean(l)
+            with tf.variable_scope('reference'):
+                if i==0:
+                    recon_ = tf.boolean_mask(reconstructed, tf.equal(self.batches, i))
+                    x_ = tf.boolean_mask(x, tf.equal(self.batches, i))
+                    
+                    l = (x_-recon_)**2
+                    self.loss_recon+= tf.reduce_mean(l)
 
-            batch_x_rows = tf.boolean_mask(x_dists, tf.equal(self.batches, i))
-            batch_x_rowscols = tf.boolean_mask(tf.transpose(batch_x_rows), tf.equal(self.batches, i))
+            with tf.variable_scope('nonreference'):
+                batch_x_rows = tf.boolean_mask(x_dists, tf.equal(self.batches, i))
+                batch_x_rowscols = tf.boolean_mask(tf.transpose(batch_x_rows), tf.equal(self.batches, i))
 
-            batch_recon_rows = tf.boolean_mask(recon_dists, tf.equal(self.batches, i))
-            batch_recon_rowscols = tf.boolean_mask(tf.transpose(batch_recon_rows), tf.equal(self.batches, i))
+                batch_recon_rows = tf.boolean_mask(recon_dists, tf.equal(self.batches, i))
+                batch_recon_rowscols = tf.boolean_mask(tf.transpose(batch_recon_rows), tf.equal(self.batches, i))
 
-            self.loss_recon += tf.reduce_mean(tf.abs(batch_x_rowscols - batch_recon_rowscols))
+                self.loss_recon += tf.reduce_mean(tf.abs(batch_x_rowscols - batch_recon_rowscols))
 
         self.loss_recon = nameop(self.loss_recon, 'loss_recon')
         tf.add_to_collection('losses', self.loss_recon)
@@ -202,13 +253,25 @@ class SAUCIE(object):
         self.loss_sparse = nameop(self.loss_sparse, 'loss_sparse')
         tf.add_to_collection('losses', self.loss_sparse)
 
+    def _within_cluster_distances(self, act):
+        dists = self.pairwise_dists(self.x, self.x)
+        #dists = tf.sqrt(dists+1e-3)
+
+        binarized = tf.where(act>0, tf.ones_like(act), tf.zeros_like(act))
+        out = self.pairwise_dists(binarized, binarized)
+        same_cluster = tf.where(tf.equal(out,tf.zeros_like(out)), tf.ones_like(out), tf.zeros_like(out))
+        #same_cluster = self.rbf_kernel(dists)
+
+        within_cluster_distances = dists*same_cluster
+        within_cluster_distances = tf.reduce_mean(within_cluster_distances)
+        return within_cluster_distances
+
     def _build_reg_entropy(self):
         # fuzzy counting regularization
         self.loss_entropy = tf.constant(0.)
         for act in tf.get_collection('activations'):
             for add_entropy_to, lambda_entropy in zip(self.args.layers_entropy, self.args.lambdas_entropy):
-                if 'encoder_{}'.format(add_entropy_to) in act.name or \
-                   (add_entropy_to=='embedding' and 'embedding' in act.name):
+                if 'encoder_{}'.format(add_entropy_to) in act.name:
                     if self.args.normalization_method=='neuronuse':
                         # normalize to (0,1)
                         act = (act+1)/2
@@ -216,6 +279,12 @@ class SAUCIE(object):
                         p = tf.reduce_sum(act, axis=0, keep_dims=True)
                         # normalize neuron sums
                         normalized = p / tf.reduce_sum(p)
+
+                        within_cluster_distances = self._within_cluster_distances(act)
+                        self.loss_withinclust = (lambda_entropy**2)*within_cluster_distances
+                        self.loss_withinclust = nameop(self.loss_withinclust, 'loss_withinclust')
+                        tf.add_to_collection('losses', self.loss_withinclust)
+
                     elif self.args.normalization_method=='softmax':
                         normalized = tf.nn.softmax(act, dim=1)
                     elif self.args.normalization_method=='tanh':
@@ -224,6 +293,7 @@ class SAUCIE(object):
                         normalized = act
                     normalized = nameop(normalized, 'normalized_activations_layer_{}'.format(add_entropy_to))
                     self.loss_entropy += lambda_entropy*tf.reduce_sum(-normalized*tf.log(normalized+1e-9))
+
 
         self.loss_entropy = nameop(self.loss_entropy, 'loss_entropy')
         tf.add_to_collection('losses', self.loss_entropy)
@@ -246,8 +316,9 @@ class SAUCIE(object):
                 batch1_rows = tf.boolean_mask(K, tf.equal(self.batches, i))
                 batch1_rowscols = tf.boolean_mask(tf.transpose(batch1_rows), tf.equal(self.batches, i))
 
-                K_b1 = tf.matrix_band_part(batch1_rowscols, 0, -1) - tf.matrix_band_part(batch1_rowscols, 0, 0) # just upper triangular part
+                K_b1 = tf.matrix_band_part(batch1_rowscols, 0, -1) # just upper triangular part
                 n_rows_b1 = tf.reduce_sum(0*tf.ones_like(K_b1)[:,0]+1)
+                nameop(n_rows_b1, 'b1')
                 K_b1 = tf.reduce_sum(K_b1) / (n_rows_b1**2 + 1e-9)
 
                 var_within[i] = K_b1
@@ -259,23 +330,29 @@ class SAUCIE(object):
                     batch2_rows = tf.boolean_mask(K, tf.equal(self.batches, j))
                     batch2_rowscols = tf.boolean_mask(tf.transpose(batch2_rows), tf.equal(self.batches, j))
 
-                    K_b2 = tf.matrix_band_part(batch2_rowscols, 0, -1) - tf.matrix_band_part(batch2_rowscols, 0, 0) # just upper triangular part
+                    K_b2 = tf.matrix_band_part(batch2_rowscols, 0, -1) # just upper triangular part
                     n_rows_b2 = tf.reduce_sum(0*tf.ones_like(K_b2)[:,0]+1)
                     K_b2 = tf.reduce_sum(K_b2) / (n_rows_b2**2 + 1e-9)
 
                     var_within[j] = K_b2
                     batch_sizes[j] = n_rows_b2
 
-
-
                 K_12 = tf.boolean_mask(K, tf.equal(self.batches, i))
                 K_12 = tf.boolean_mask(tf.transpose(K_12), tf.equal(self.batches, j))
-                K_12 = tf.reduce_mean(tf.transpose(K_12))
-                self.loss_mmd+= var_within[i] + var_within[j] - 2 * K_12 / (batch_sizes[i]*batch_sizes[j])
+                K_12 = tf.reduce_sum(tf.transpose(K_12))
 
-        self.loss_mmd /= self.args.num_batches
+                if i==0 and j==1:
+                    nameop(var_within[i], 'test1')
+                    nameop(var_within[j], 'test2')
+                    nameop(K_12, 'test3')
+                mmd_pair = var_within[i] + var_within[j] - 2 * K_12 / (batch_sizes[i]*batch_sizes[j])
+                #mmd_pair = tf.Print(mmd_pair, [mmd_pair], "mmd_pair_{}{}: ".format(i,j))
+                #mmd_pair = tf.Print(var_within[i], [var_within[i]], "mmd_pair_{}{}: ".format(i,j))
+                self.loss_mmd += tf.abs(mmd_pair)
 
-        self.loss_mmd = self.args.lambda_batchcorrection*tf.abs(self.loss_mmd)
+        #self.loss_mmd /= self.args.num_batches
+
+        self.loss_mmd = self.args.lambda_batchcorrection*(self.loss_mmd)
         self.loss_mmd = nameop(self.loss_mmd, 'loss_mmd')
         tf.add_to_collection('losses', self.loss_mmd)
 
@@ -350,20 +427,45 @@ class SAUCIE(object):
         r2 = tf.reduce_sum(x2*x2, 1, keep_dims=True)
 
         D = r1 - 2*tf.matmul(x1, tf.transpose(x2)) + tf.transpose(r2)
+
+        #D = tf.sqrt(D + 1e-3)
         return D
 
-    def rbf_kernel(self, x, sigma=1):
-        sigma = tf.reduce_mean(x, axis=1, keep_dims=True)
-        x = np.e**(- ((x**2) / (sigma)))
+    def rbf_kernel(self, x, sigma=None):
+        if not sigma:
+            sigma = tf.reduce_mean(x, axis=1, keep_dims=True)
+        x = np.e**(- (x / (sigma)))
         return x
 
     def graph_init(self, sess=None):
         if not sess: sess = self.sess
 
+        if self.debug:
+            self.check_op = tf.add_check_numerics_ops()
         init_vars = tf.global_variables()
         init_op = tf.variables_initializer(init_vars)
         sess.run(init_op)
         self.saver = tf.train.Saver(init_vars, max_to_keep=1)
+
+        # fn = '/data/amodio/merck_pembro_sbrt/tfrecords/run1.tfrecords'
+        # filename_queue = tf.train.string_input_producer([fn])
+        # reader = tf.TFRecordReader()
+        # _, serialized_example = reader.read(filename_queue)
+        # feature = {
+        #             'X': tf.FixedLenFeature([54], tf.float32),
+        #           }
+
+        # features = tf.parse_single_example(serialized_example, features=feature)
+        # batch = features['X']
+        # self.batch_op = tf.train.shuffle_batch([batch], batch_size=self.args.batch_size, capacity=100*self.args.batch_size, num_threads=1, min_after_dequeue=10)
+
+        # sess.run(tf.global_variables_initializer())
+        # sess.run(tf.local_variables_initializer())
+        # coord = tf.train.Coordinator()
+        # threads = tf.train.start_queue_runners(sess=sess, coord=coord)
+
+
+
         return self.saver
 
     def save(self, iteration=None, saver=None, sess=None, folder=None):
@@ -377,29 +479,42 @@ class SAUCIE(object):
         print("Model saved to {}".format(savefile))
 
     def get_loss_names(self):
-        losses = [tns.name[:-2].replace('loss_','') for tns in tf.get_collection('losses')]
+        losses = [tns.name[:-2].replace('loss_','').split('/')[-1] for tns in tf.get_collection('losses')]
         return "Losses: {}".format(' '.join(losses))
 
     def train(self, load, steps):
+
         t = time.time()
         start = self.iteration
         while (self.iteration - start) < steps:
             self.iteration+=1
 
-            batch = load.next_batch(self.args.batch_size)
-            if isinstance(batch, tuple):
-                batch, batch_labels = batch
-                    
-            feed = {tbn('x:0'): batch,
-                    tbn('y:0'): batch,
-                    tbn('batches:0'): batch_labels,
-                    tbn('is_training:0'): True,
-                    tbn('learning_rate:0'): self.args.learning_rate}
-            
-            if self.args.batchcorrection=='adversary':
-                _ = self.sess.run([obn('train_op_adversary')], feed_dict=feed)
+            self.batch = load.next_batch(self.args.batch_size)
+            if isinstance(self.batch, tuple):
+                self.batch, self.batch_labels = self.batch
 
-            _ = self.sess.run([obn('train_op')], feed_dict=feed)
+            # [self.batch] = self.sess.run([self.batch_op])
+            # self.batch = self.batch[:,2:50]
+            # self.batch = asinh(self.batch)
+            # self.batch_labels = np.ones(self.batch.shape[0])
+
+            feed = {tbn(self.scope+'/'+'x:0'): self.batch,
+                    tbn(self.scope+'/'+'y:0'): self.batch,
+                    tbn(self.scope+'/'+'batches:0'): self.batch_labels,
+                    tbn(self.scope+'/'+'is_training:0'): True,
+                    tbn(self.scope+'/'+'learning_rate:0'): self.args.learning_rate}
+            
+            if self.iteration<self.pretrain_steps:
+                _ = self.sess.run([obn(self.scope+'/'+'pretrain_op')], feed_dict=feed)
+                continue
+
+            if self.args.batchcorrection=='adversary':
+                _ = self.sess.run([obn(self.scope+'/'+'train_op_adversary')], feed_dict=feed)
+
+            ops = [obn(self.scope+'/'+'train_op')]
+            if self.debug: ops.append(self.check_op)
+
+            _ = self.sess.run(ops, feed_dict=feed)
 
     def get_loss(self, load):
         losses = None
@@ -408,11 +523,11 @@ class SAUCIE(object):
             if isinstance(batch, tuple):
                 batch, batch_labels = batch
                 
-            feed = {tbn('x:0'): batch,
-                    tbn('y:0'): batch,
-                    tbn('batches:0'): batch_labels,
-                    tbn('is_training:0'): True,
-                    tbn('learning_rate:0'): self.args.learning_rate}
+            feed = {tbn(self.scope+'/'+'x:0'): batch,
+                    tbn(self.scope+'/'+'y:0'): batch,
+                    tbn(self.scope+'/'+'batches:0'): batch_labels,
+                    tbn(self.scope+'/'+'is_training:0'): True,
+                    tbn(self.scope+'/'+'learning_rate:0'): self.args.learning_rate}
 
 
             batch_losses = self.sess.run(tf.get_collection('losses'), feed_dict=feed)
@@ -426,6 +541,14 @@ class SAUCIE(object):
         
         return lstring
 
+    def save(self, save_folder=None, sess=None):
+        if not save_folder: save_folder = self.args.save_folder
+        if not sess: sess = self.sess
+
+        self.saver.save(sess, save_folder + '/SAUCIE', write_meta_graph=True)
+
+        with open(save_folder + '/args.pkl', 'wb') as f:
+            pickle.dump(self.args, f)
 
 
 

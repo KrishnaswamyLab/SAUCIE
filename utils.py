@@ -3,12 +3,13 @@ import tensorflow as tf
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
+import matplotlib.colors as colors
 import pandas as pd
 from matplotlib import offsetbox
 import loader
 from skimage.io import imsave
 from sklearn.manifold import TSNE
-from sklearn.metrics import adjusted_rand_score, silhouette_score
+from sklearn.metrics import adjusted_rand_score, silhouette_score, pairwise_distances
 from sklearn.decomposition import PCA
 from scipy.spatial.distance import pdist, squareform
 from skimage.io import imsave
@@ -106,8 +107,8 @@ def to_one_hot(y, n):
     h[np.arange(y.shape[0]), y] = 1
     return h
 
-def get_layer(sess, l, name):
-    tensor = tbn(name)
+def get_layer(sess, l, name, scope):
+    tensor = tbn("{}/{}:0".format(scope,name))
     layer = []
     labels = []
     for batch in l.iter_batches():
@@ -115,7 +116,7 @@ def get_layer(sess, l, name):
             batch, batch_labels = batch
             labels.append(batch_labels)
         
-        feed = {tbn('x:0'):batch}#, tbn('is_training:0'):False}
+        feed = {tbn('{}/x:0'.format(scope)):batch}#, tbn('is_training:0'):False}
         #feed = {tbn('x:0'):batch, tbn('batches:0'):batch_labels}
         [act] = sess.run([tensor], feed_dict=feed)
 
@@ -134,8 +135,8 @@ def plot(args, data, labels=None, title='', fn='', alpha=.3, s=2, fig=None, ax=N
     if not fig:
         fig, ax = plt.subplots(1,1)
     ax.set_title(title)
-    ax.set_xticks([])
-    ax.set_yticks([])
+    # ax.set_xticks([])
+    # ax.set_yticks([])
 
     if data.shape[1]>2:
         print("Can't plot input with >2 dimensions...")
@@ -163,9 +164,9 @@ def plot(args, data, labels=None, title='', fn='', alpha=.3, s=2, fig=None, ax=N
         plt.close('all')
         print("Plot saved to {}".format(fn))
 
-def neuronuse_histogram(args, sess, loader, layer=None, neuronuse=None, ax=None):
+def neuronuse_histogram(args, sess, loader, layer=None, neuronuse=None, ax=None, scope=''):
     if not isinstance(neuronuse, np.ndarray):
-        all_acts, all_labels = get_layer(sess, loader, 'layer_encoder_{}_activation:0'.format(layer))
+        all_acts, all_labels = get_layer(sess, loader, 'layer_encoder_{}_activation'.format(layer), scope)
         all_acts = (all_acts+1) / 2.
         neuronuse = all_acts.sum(axis=0)
 
@@ -335,10 +336,10 @@ def calculate_loss(sess, loader, train_or_test='test'):
     avg_loss = sum(losses) / float(len(losses))
     return avg_loss
 
-def count_clusters(args, sess, loader, layer, thresh=0, return_clusters=False, BIN_MIN=50):
+def count_clusters(args, sess, loader, layer, thresh=0, return_clusters=False, BIN_MIN=50, scope=''):
     '''Counts the number of clusters after binarizing the activations of the given layer.'''
     #acts, labels = get_layer(sess, loader, 'normalized_activations_layer_{}:0'.format(layer))
-    acts, labels = get_layer(sess, loader, 'layer_encoder_{}_activation:0'.format(layer))
+    acts, labels = get_layer(sess, loader, 'layer_encoder_{}_activation'.format(layer), scope=scope)
 
     unique_argmaxes, unique_argmaxes_counts = np.unique(acts.argmax(axis=1), return_counts=True)
     unique_argmaxes_counts = list(reversed(sorted(unique_argmaxes_counts.tolist())))
@@ -450,29 +451,66 @@ def confusion_matrix(args, sess, loader, layer, clusters):
     ax.imshow(table.as_matrix(), cmap='jet')
     fig.savefig(args.save_folder + '/confusion_matrix_{}.png'.format(layer))
 
-def channel_by_cluster(args, sess, loader, layer):
+def channel_by_cluster(args, sess, loader, layer, cols, ax=None, savefile=None, zscore=False):
     x, labels = get_layer(sess, loader, 'x:0')
-    count, clusters = count_clusters(args, sess, loader, layer, thresh=.5, return_clusters=True)
+    count, clusters = count_clusters(args, sess, loader, layer, thresh=0, return_clusters=True)
 
     x = x[clusters!=-1,:]
     clusters = clusters[clusters!=-1]
 
     df = pd.DataFrame(x)
+    print(df.shape)
     df['cluster'] = clusters
+
     grouped = df.groupby('cluster')
     means = grouped.apply(lambda x: x.mean(axis=0))
     del means['cluster']
 
-    with open('/home/krishnan/data/zika_data/gated/markers.csv') as f:
-        cols = f.read().strip()
-        cols = [c.strip().split('_')[1] for c in cols.split('\n')]
+    if zscore:
+        means = (means - means.mean(axis=0)) / (means.std(axis=0)**2)
 
-    fig, ax = plt.subplots(1,1, figsize=(30,30))
-    plt.subplots_adjust(left=.1, bottom=.1, right=1, top=1)
-    ax.imshow(means.transpose(), cmap='jet')
+    normalizer = colors.Normalize(means.min().min(), means.max().max())
+    means = normalizer(means)
+    means = means.data
+
+    if not ax:
+        fig, ax = plt.subplots(1,1, figsize=(30,30))
+        fig.subplots_adjust(left=.1, bottom=.1, right=1, top=1)
+    ax.imshow(means.transpose(), cmap='bwr')
     ax.set_yticks(range(len(cols)))
-    ax.set_yticklabels(cols, fontsize=24)
+    ax.set_yticklabels(cols)
     ax.set_xticks([])
-    ax.set_ylabel('Marker', fontsize=28)
-    ax.set_xlabel('Cluster', fontsize=28)
-    fig.savefig(args.save_folder+'/means')
+    ax.set_ylabel('Marker')
+    ax.set_xlabel('Cluster')
+    if savefile:
+        fig.savefig(args.save_folder+savefile)
+
+def calculate_mmd(k1, k2, k12):
+    k1 = np.triu(k1)
+    k2 = np.triu(k2)
+    k12 = np.triu(k12)
+
+    return k1.sum()/(k1.shape[0]*k1.shape[1]) + k2.sum()/(k2.shape[0]*k2.shape[1]) - 2*k12.sum()/(k12.shape[0]*k12.shape[1])
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

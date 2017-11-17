@@ -9,10 +9,14 @@ from sklearn.manifold import TSNE
 from sklearn.model_selection import train_test_split
 np.random.seed(1)
 
-def asinh(x):
-    f = np.vectorize(lambda y: math.asinh(y/5))
+def asinh(x, scale=5.):
+    f = np.vectorize(lambda y: math.asinh(y/scale))
 
     return f(x) 
+
+def sinh(x, scale=5.):
+
+    return scale*np.sinh(x)
 
 class SilentFile(object):
     def write(self, x): pass
@@ -89,6 +93,7 @@ class LoaderMNIST(Loader):
     labels = None
     data_test = None
     labels_test = None
+    input_dim = 28*28
     data_folder = "MNIST_data/"
 
     def __init__(self, args, shuffle=False):
@@ -120,6 +125,7 @@ class LoaderMNIST(Loader):
 class LoaderZika(Loader):
     data = None
     labels = None
+    input_dim = 34
     data_folder = '/home/krishnan/data/zika_data/gated'
 
     def __init__(self, args, shuffle=False):
@@ -132,8 +138,8 @@ class LoaderZika(Loader):
 
     def load_data(self, shuffle):
         colnames = [line.strip() for line in open(os.path.join(self.data_folder, 'colnames.csv'))] 
-        cols_to_use = [colnames.index(line.strip()) for line in open(os.path.join(self.data_folder, 'markers.csv'))] 
 
+        cols_to_use = [colnames.index(line.strip()) for line in open(os.path.join(self.data_folder, 'markers.csv'))] 
 
         # files = glob.glob(os.path.join(self.data_folder, '161913*'))
         # data = []
@@ -150,9 +156,11 @@ class LoaderZika(Loader):
 
 
         files = ['/data/kevin/Zika_Cytof/GatedData/Spike-in_LIVE_151548ZIKV_04May2017_01_splorm_0_normalized.fcs', 
-                 '/data/kevin/Zika_Cytof/GatedData/Spike-in_LIVE_151550ZIKV_10May2017_01_splorm_0_normalized.fcs']#,
-                 # '/data/kevin/Zika_Cytof/GatedData/Spike-in_LIVE_151553ZIKV_27April2017_01_splorm_0_normalized.fcs',
-                 # '/data/kevin/Zika_Cytof/GatedData/Sample_LIVE_151548ZIKV_04May2017_01_splorm_0_normalized.fcs']
+                 #'/data/kevin/Zika_Cytof/GatedData/Spike-in_LIVE_151550ZIKV_10May2017_01_splorm_0_normalized.fcs',
+                 #'/data/kevin/Zika_Cytof/GatedData/Spike-in_LIVE_151553ZIKV_27April2017_01_splorm_0_normalized.fcs',
+                  #'/data/kevin/Zika_Cytof/GatedData/Spike-in_LIVE_161927ZIKV_06April2017_01_splorm_0_normalized.fcs',
+                   '/data/kevin/Zika_Cytof/GatedData/Spike-in_LIVE_161924ZIKV_22Mar2017_01_splorm_0_normalized.fcs']#,
+                 #'/data/kevin/Zika_Cytof/GatedData/Sample_LIVE_151550ZIKV_10May2017_01_splorm_0_normalized.fcs']
         data = []
         labels = []
         for i,f in enumerate(files):
@@ -176,11 +184,72 @@ class LoaderZika(Loader):
         LoaderZika.data = data
         LoaderZika.labels = labels
 
+class LoaderZika2(Loader):
+    data = None
+    labels = None
+    input_dim = 34
+    data_folder = '/home/krishnan/data/zika_data/gated'
+
+    def __init__(self, args, shuffle=False):
+        self.args = args
+        self.start = 0
+        self.epoch = 0
+
+        if not isinstance(self.data, np.ndarray):
+            self.load_data(shuffle)
+
+    def load_data(self, shuffle):
+        colnames = [line.strip() for line in open(os.path.join(self.data_folder, 'colnames.csv'))] 
+
+        cols_to_use = [colnames.index(line.strip()) for line in open(os.path.join(self.data_folder, 'markers.csv'))] 
+
+        # files = glob.glob(os.path.join(self.data_folder, '161913*'))
+        # data = []
+        # labels = []
+        # for i,f in enumerate(files):
+        #     if any([f.find(name)>0 for name in ['markers','colnames','npz']]): continue
+        #     print(f)
+        #     x = np.genfromtxt(f, delimiter=',', skip_header=1, usecols=cols_to_use, max_rows=75000)
+        #     x = asinh(x)
+
+        #     data.append(x)
+        #     labels.append(i*np.ones(x.shape[0]))
+        #     print(x.shape)
+
+
+        files = ['/data/kevin/Zika_Cytof/GatedData/Spike-in_LIVE_151548ZIKV_04May2017_01_splorm_0_normalized.fcs', 
+                 '/data/kevin/Zika_Cytof/GatedData/Spike-in_LIVE_151550ZIKV_10May2017_01_splorm_0_normalized.fcs']
+        data = []
+        labels = []
+        for i,f in enumerate(files):
+            meta, x = fcsparser.parse(f, reformat_meta=True)
+            x = x.as_matrix()[:,cols_to_use]
+            x = asinh(x)
+            print(x.shape)
+            data.append(x)
+            labels.append(i*np.ones(x.shape[0]))
+       
+
+
+        data = np.concatenate(data, axis=0)
+        labels = np.concatenate(labels, axis=0)
+
+        r = list(range(len(labels)))
+        np.random.shuffle(r)
+        data = data[r,:]
+        labels = labels[r]
+
+        LoaderZika2.data = data
+        LoaderZika2.labels = labels
+
+
+
 class LoaderGMM(Loader):
     data = None
     labels = None
     data_test = None
     labels_test = None
+    input_dim = 200
 
     def __init__(self, args):
         self.args = args
@@ -189,7 +258,7 @@ class LoaderGMM(Loader):
         if not isinstance(self.data, np.ndarray):
             self.load_data()
 
-    def load_data(self, n_pts=5000, n_clusters=4, theta=1, D_big=100, D_small=10):
+    def load_data(self, n_pts=5000, n_clusters=5, theta=1, D_big=200):
         print("Loading data...")
         all_v = []
         labels = []
@@ -198,8 +267,8 @@ class LoaderGMM(Loader):
         for c in range(n_clusters*2):
 
             v = np.zeros((D_big,n_pts))
-            mean = np.random.uniform(1,1,[partition_dim])
-            cov = np.diag(np.ones((partition_dim))) #np.random.uniform(1,1,[25,25])
+            mean = np.random.uniform(3,3,[partition_dim])
+            cov = np.diag(.5*np.ones((partition_dim))) #np.random.uniform(1,1,[25,25])
             v[partition_dim*c:partition_dim*(c+1),:] = np.random.multivariate_normal(mean,cov,(n_pts)).T
             all_v.append(v)
             labels.append((c%n_clusters)*np.ones(v.shape[1]))
@@ -223,9 +292,9 @@ class LoaderGMM(Loader):
 
         data = all_v.T
         labels = np.concatenate(labels, axis=0)
-        #data = data - data.mean()
-        #data = data / data.std()
-
+        # data = data - data.min()
+        #data = data / data.max()
+       
         r = list(range(len(labels)))
         np.random.shuffle(r)
         data = data[r,:]
@@ -236,6 +305,7 @@ class LoaderGMM(Loader):
 class LoaderMouse(Loader):
     data = None
     labels = None
+    input_dim = 15
 
     def load_data(self):
         print("Loading data...")
@@ -246,11 +316,71 @@ class LoaderMouse(Loader):
             data.append(scipy.io.mmread(fn))
             labels.append(i*np.ones((data[-1].shape[1])))
         data = np.concatenate([d.todense() for d in data], axis=1)
-        data = asinh(data)
+        data = data.T
         labels = np.concatenate(labels, axis=0)
 
+        pca = PCA(self.input_dim)
+        data = pca.fit_transform(data)
+        self.pca = pca
         LoaderMouse.data = data
         LoaderMouse.labels = labels
+
+    
+
+class LoaderEMT(Loader):
+    data = None
+    labels = None
+    input_dim = 15
+
+    def load_data(self):
+        print("Loading data...")
+        fn = '/data/krishnan/emt_data/data_raw.mat'
+        data = scipy.io.loadmat(fn)['data']
+        labels = np.ones(data.shape[0])
+        LoaderEMT.data_original = data
+
+        pca = PCA(self.input_dim)
+        data = pca.fit_transform(data)
+        #data = np.clip(data, np.percentile(data, 1, axis=0), np.percentile(data, 99, axis=0))
+
+        LoaderEMT.pca = pca
+        LoaderEMT.data = data
+        LoaderEMT.labels = labels
+
+class LoaderMerck(Loader):
+    data = None
+    labels = None
+    input_dim = 48
+    cols = None
+
+    def load_data(self):
+        print("Loading data...")
+        files = ['/data/amodio/merck_pembro_sbrt/RD3437.060117.Run1/RD3437.060117.Run1_01.FCS']
+        data = []
+        labels = []
+        for i,f in enumerate(files):
+            meta, x = fcsparser.parse(f, reformat_meta=True)
+            cols_to_use = [meta['_channel_names_'].index(c) for c in meta['_channel_names_'] if c not in ['Time', 'Event_length', 'Center', 'Offset', 'Width', 'Residual']]
+            x = x.as_matrix()[:,cols_to_use]
+            x = asinh(x)
+            print(x.shape)
+            data.append(x)
+            labels.append(i*np.ones(x.shape[0]))
+       
+
+        data = np.concatenate(data, axis=0)
+        labels = np.concatenate(labels, axis=0)
+
+        r = list(range(len(labels)))
+        np.random.shuffle(r)
+        r = r[:100000]
+        data = data[r,:]
+        labels = labels[r]
+
+        LoaderMerck.data = data
+        LoaderMerck.labels = labels
+
+        LoaderMerck.cols = [c for c in meta['_channel_names_'] if c not in ['Time', 'Event_length', 'Center', 'Offset', 'Width', 'Residual']]
 
 
 
