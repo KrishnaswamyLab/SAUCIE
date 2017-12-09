@@ -105,62 +105,6 @@ def calculate_loss(sess, loader, train_or_test='test'):
     avg_loss = sum(losses) / float(len(losses))
     return avg_loss
 
-def count_clusters(sess, loader, layer, thresh=0, return_clusters=False, BIN_MIN=50, scope=None):
-    '''Counts the number of clusters after binarizing the activations of the given layer.'''
-    #acts, labels = get_layer(sess, loader, 'normalized_activations_layer_{}:0'.format(layer))
-    acts, labels = get_layer(sess, loader, 'layer_encoder_{}_activation'.format(layer), scope=scope)
-
-    unique_argmaxes, unique_argmaxes_counts = np.unique(acts.argmax(axis=1), return_counts=True)
-    unique_argmaxes_counts = list(reversed(sorted(unique_argmaxes_counts.tolist())))
-    # for i in range(len(unique_argmaxes)):
-    #     if i>10: break
-    #     print(unique_argmaxes[i], unique_argmaxes_counts[i])
-    # print("Max neuron values: ", acts.max(axis=1)[:5], "...")
-    # print("Number of unique max neurons: ", len(np.unique(acts.argmax(axis=1))))
-
-
-    binarized = np.where(acts>thresh, 1, 0)
-
-    # k = 10
-    # binarized = np.zeros(acts.shape)
-    # topk = np.argpartition(acts, -k, axis=1)[:,-k:]
-    # for i,row in enumerate(topk):
-    #     for j in row:
-    #         binarized[i,j] = 1
-    unique_rows, counts = np.unique(binarized, axis=0, return_counts=True)
-    unique_rows = unique_rows[counts>BIN_MIN]
-
-    #unique_rows = np.vstack({tuple(row) for row in binarized})
-    num_clusters = unique_rows.shape[0]
-    r = list(range(num_clusters))
-    random.shuffle(r)
-    unique_rows = unique_rows[r,:]
-    print(num_clusters)
-    if num_clusters>5000:
-        print("Too many clusters to go through...")
-        return None, None
-    
-    num_clusters = 0
-    rows_clustered = 0
-    new_labels = -1*np.ones(labels.shape)
-    for i,row in enumerate(unique_rows):
-        if i and i%100==0:
-            print(i)
-        rows_equal_to_this_code = np.where(np.all(binarized==row, axis=1))[0]
-
-        new_labels[rows_equal_to_this_code] = num_clusters
-        num_clusters += 1
-        rows_clustered += rows_equal_to_this_code.shape[0]
-
-    print("---- Num clusters: {} ---- Pct clustered: {:.3f} ----".format(num_clusters, 1.*rows_clustered/new_labels.shape[0]))
-
-    if return_clusters:
-        return num_clusters, new_labels 
-
-    if return_clusters:
-        return num_clusters, new_labels 
-    return num_clusters     
-
 def channel_by_cluster(sess, loader, layer, cols, ax=None, savefile=None, zscore=False, BIN_MIN=50, fig_cbar=None, fig=None, clusters=None):
     x, labels = get_layer(sess, loader, 'x')
     x = np.where(x<0, 0, x)
@@ -209,56 +153,6 @@ def channel_by_cluster(sess, loader, layer, cols, ax=None, savefile=None, zscore
 def calculate_mmd(k1, k2, k12):
 
     return k1.sum()/(k1.shape[0]*k1.shape[1]) + k2.sum()/(k2.shape[0]*k2.shape[1]) - 2*k12.sum()/(k12.shape[0]*k12.shape[1])
-
-def np_to_tfrecords(X, Y, file_path_prefix, verbose=True):
-    def _dtype_feature(ndarray):
-        assert isinstance(ndarray, np.ndarray)
-        dtype_ = ndarray.dtype
-        if dtype_ == np.float64 or dtype_ == np.float32:
-            return lambda array: tf.train.Feature(float_list=tf.train.FloatList(value=array))
-        elif dtype_ == np.int64:
-            return lambda array: tf.train.Feature(int64_list=tf.train.Int64List(value=array))
-        else:
-            raise ValueError("The input should be numpy ndarray. \
-                               Instaed got {}".format(ndarray.dtype))
-
-    assert isinstance(X, np.ndarray)
-    assert len(X.shape) == 2  # If X has a higher rank,
-                               # it should be rshape before fed to this function.
-    assert isinstance(Y, np.ndarray) or Y is None
-
-    # load appropriate tf.train.Feature class depending on dtype
-    dtype_feature_x = _dtype_feature(X)
-    if Y is not None:
-        assert X.shape[0] == Y.shape[0]
-        assert len(Y.shape) == 2
-        dtype_feature_y = _dtype_feature(Y)
-
-    # Generate tfrecord writer
-    result_tf_file = file_path_prefix + '.tfrecords'
-    writer = tf.python_io.TFRecordWriter(result_tf_file)
-    if verbose:
-        print("Serializing {:d} examples into {}".format(X.shape[0], result_tf_file))
-
-    # iterate over each sample,
-    # and serialize it as ProtoBuf.
-    for idx in range(X.shape[0]):
-        x = X[idx]
-        if Y is not None:
-            y = Y[idx]
-
-        d_feature = {}
-        d_feature['X'] = dtype_feature_x(x)
-        if Y is not None:
-            d_feature['Y'] = dtype_feature_y(y)
-
-        features = tf.train.Features(feature=d_feature)
-        example = tf.train.Example(features=features)
-        serialized = example.SerializeToString()
-        writer.write(serialized)
-
-    if verbose:
-        print("Writing {} done!".format(result_tf_file))
 
 def create_legend(npts, ax, cmap=cm.jet):
     lhs = []
