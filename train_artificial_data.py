@@ -102,5 +102,4 @@ reconstruction = run_with_batchcorrection()
 
 run_with_clustering(reconstruction)
 
-input('.')
 
