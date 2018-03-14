@@ -96,9 +96,11 @@ def train_batch_correction(rawfiles):
             load = Loader(data=alldata, labels=alllabels, shuffle=True)
 
             tf.reset_default_graph()
-            saucie = SAUCIE(input_dim=refx.shape[1], lambda_b=.1)
 
-            saucie.train(load, steps=1000, batch_size=100)
+            saucie = SAUCIE(input_dim=refx.shape[1], lambda_b=args.lambda_b)
+
+            for i in range(args.num_iterations):
+                saucie.train(load, steps=1000, batch_size=200)
 
             saucie.save(folder=os.path.join(model_dir, nonrefname))
 
@@ -171,18 +173,18 @@ def train_cluster(inputfiles):
 
         tf.reset_default_graph()
         x = get_data(inputfiles[0], sample=2)
-        saucie = SAUCIE(input_dim=x.shape[1], lambda_d=.15, lambda_c=.1)
+        saucie = SAUCIE(input_dim=x.shape[1], lambda_d=args.lambda_d, lambda_c=args.lambda_c)
 
-        for i in range(10):
+        for i in range(args.num_iterations):
             alldata = []
             for f in inputfiles:
-                x = get_data(f, sample=100)
+                x = get_data(f, sample=args.num_points_sample)
                 alldata.append(x)
             alldata = np.concatenate(alldata, axis=0)
 
             load = Loader(data=alldata, shuffle=True)
 
-            saucie.train(load, steps=1000, batch_size=500)
+            saucie.train(load, steps=1000, batch_size=400)
 
         saucie.save(folder=model_dir)
 
@@ -256,6 +258,13 @@ def parse_args():
     parser.add_argument('--output_dir', type=str, help='directory to create for output files')
     parser.add_argument('--batch_correct', action='store_true', default=False, help='whether or not to do batch correction on the files')
     parser.add_argument('--cluster', action='store_true', default=False, help='whether or not to do clustering on the files')
+    parser.add_argument('--lambda_c', default=.1, type=float, help='if clustering, the value of lambda_c')
+    parser.add_argument('--lambda_d', default=.2, type=float, help='if clustering, the value of lambda_d')
+    parser.add_argument('--lambda_b', default=.1, type=float, help='if batch correcting, the value of lambda_b')
+    parser.add_argument('--num_iterations', default=10, type=int, help='number of iterations to train (in thousands)')
+    parser.add_argument('--num_points_sample', default=100, type=int, 
+        help='''when loading data into memory, number of points to sample from each file. if all of the data from all files fits into
+        memory at the same time, set to 0 for no sampling.''')
 
     args = parser.parse_args()
 
