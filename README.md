@@ -9,7 +9,7 @@ numpy 1.13.3
 ```
 
 ## Running
-An example of how it is used can be run with:
+An example of how to use it:
 ```
-python train_artificial_data.py
+python SAUCIE.py --input_dir path/to/input/fcs_files --output_dir path/for/output/fcs_files  --batch_correct --cluster;
 ```
