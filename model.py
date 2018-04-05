@@ -229,7 +229,7 @@ class SAUCIE(object):
 
         mean1, var1 = tf.nn.moments(nonrefrecon, 0)
         mean2, var2 = tf.nn.moments(nonrefy, 0)
-        l = (((nonrefrecon - mean1) / tf.sqrt(var1)) - ((nonrefy - mean2) / tf.sqrt(var2)))**2
+        l = ( ((nonrefrecon - mean1) / (tf.sqrt(var1+1e-6)+1e-6)) - ((nonrefy - mean2) / (tf.sqrt(var2+1e-6)+1e-6)) )**2
 
         self.loss_recon += tf.reduce_mean(l)
 
