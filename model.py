@@ -23,7 +23,9 @@ class SAUCIE(object):
         activation=lrelu,
         learning_rate=.001,
         restore_folder='',
-        save_folder=''):
+        save_folder='',
+        limit_gpu_fraction=.3,
+        no_gpu=False):
         """
         The SAUCIE model.
 
@@ -60,7 +62,7 @@ class SAUCIE(object):
         self.learning_rate_tensor = tf.placeholder(tf.float32, shape=[], name='learning_rate_tensor')
 
         self._build()
-        self.init_session()
+        self.init_session(limit_gpu_fraction, no_gpu)
 
         self.graph_init(self.sess)
 
@@ -105,25 +107,63 @@ class SAUCIE(object):
 
     def _build_layers(self):
         """Construct the layers of SAUCIE."""
-        h1 = tf.layers.dense(self.x, 512, activation=lrelu, name='encoder0', use_bias=True)
+        if self.lambda_b:
+            h1 = tf.layers.dense(self.x, 2000, activation=lrelu, name='encoder0', use_bias=True)
 
-        h2 = tf.layers.dense(h1, 256, activation=lrelu, name='encoder1', use_bias=True)
+            h2 = tf.layers.dense(h1, 1000, activation=lrelu, name='encoder1', use_bias=True)
 
-        h3 = tf.layers.dense(h2, 128, activation=lrelu, name='encoder2', use_bias=True)
+            h3 = tf.layers.dense(h2, 500, activation=lrelu, name='encoder2', use_bias=True)
 
-        self.embedded = tf.layers.dense(h3, 2, activation=tf.identity, name='embedding', use_bias=True)
+            self.embedded = tf.layers.dense(h3, 2, activation=tf.identity, name='embedding', use_bias=True)
+            self.embedded = nameop(self.embedded, 'embeddings')
 
-        h5 = tf.layers.dense(self.embedded, 128, activation=lrelu, name='decoder0', use_bias=True)
+            h5 = tf.layers.dense(self.embedded, 500, activation=lrelu, name='decoder0', use_bias=True)
 
-        h6 = tf.layers.dense(h5, 256, activation=lrelu, name='decoder1', use_bias=True)
+            h6 = tf.layers.dense(h5, 1000, activation=lrelu, name='decoder1', use_bias=True)
 
-        h7 = tf.layers.dense(h6, 512, activation=tf.nn.relu, name='decoder2', use_bias=True)
+            h7 = tf.layers.dense(h6, 2000, activation=lrelu, name='decoder2', use_bias=True)
+            h7 = nameop(h7, 'layer_c')
 
-        self.reconstructed = tf.layers.dense(h7, self.input_dim, activation=tf.identity, name='recon', use_bias=True)
+            self.reconstructed = tf.layers.dense(h7, self.input_dim, activation=tf.identity, name='recon', use_bias=True)
+            self.reconstructed = nameop(self.reconstructed, 'output')
+        elif self.lambda_c:
+            h1 = tf.layers.dense(self.x, 512, activation=lrelu, name='encoder0', use_bias=True)
 
-        h7 = nameop(h7, 'layer_c')
-        self.embedded = nameop(self.embedded, 'embeddings')
-        self.reconstructed = nameop(self.reconstructed, 'output')
+            h2 = tf.layers.dense(h1, 256, activation=lrelu, name='encoder1', use_bias=True)
+
+            h3 = tf.layers.dense(h2, 128, activation=lrelu, name='encoder2', use_bias=True)
+
+            self.embedded = tf.layers.dense(h3, 2, activation=tf.identity, name='embedding', use_bias=True)
+            self.embedded = nameop(self.embedded, 'embeddings')
+
+            h5 = tf.layers.dense(self.embedded, 128, activation=lrelu, name='decoder0', use_bias=True)
+
+            h6 = tf.layers.dense(h5, 256, activation=lrelu, name='decoder1', use_bias=True)
+
+            h7 = tf.layers.dense(h6, 512, activation=tf.nn.relu, name='decoder2', use_bias=True)
+            h7 = nameop(h7, 'layer_c')
+
+            self.reconstructed = tf.layers.dense(h7, self.input_dim, activation=tf.identity, name='recon', use_bias=True)
+            self.reconstructed = nameop(self.reconstructed, 'output')
+        else:
+            h1 = tf.layers.dense(self.x, 2000, activation=lrelu, name='encoder0', use_bias=True)
+
+            h2 = tf.layers.dense(h1, 1000, activation=lrelu, name='encoder1', use_bias=True)
+
+            h3 = tf.layers.dense(h2, 500, activation=lrelu, name='encoder2', use_bias=True)
+
+            self.embedded = tf.layers.dense(h3, 2, activation=tf.identity, name='embedding', use_bias=True)
+            self.embedded = nameop(self.embedded, 'embeddings')
+
+            h5 = tf.layers.dense(self.embedded, 500, activation=lrelu, name='decoder0', use_bias=True)
+
+            h6 = tf.layers.dense(h5, 1000, activation=lrelu, name='decoder1', use_bias=True)
+
+            h7 = tf.layers.dense(h6, 2000, activation=lrelu, name='decoder2', use_bias=True)
+            h7 = nameop(h7, 'layer_c')
+
+            self.reconstructed = tf.layers.dense(h7, self.input_dim, activation=tf.identity, name='recon', use_bias=True)
+            self.reconstructed = nameop(self.reconstructed, 'output')
 
     def _build_losses(self):
         """Build all the loss ops for the network."""
@@ -132,24 +172,25 @@ class SAUCIE(object):
         if self.lambda_b:
             with tf.variable_scope('reconstruction_mmd'):
                 self._build_reconstruction_loss_mmd(self.reconstructed, self.x)
+            with tf.variable_scope('batchcorrection'):
+                self._build_reg_b()
+
         else:
             with tf.variable_scope('reconstruction'):
                 self._build_reconstruction_loss(self.reconstructed, self.x)
 
-        with tf.variable_scope('batchcorrection'):
-            self._build_reg_b()
+        if self.lambda_c:
+            with tf.variable_scope('clustering'):
+                self.loss_c = 0
 
+                act = tbn('layer_c:0')
+                act = act / tf.reduce_max(act)
 
-        with tf.variable_scope('clustering'):
-            self.loss_c = 0
+                self._build_reg_c(act)
 
-            act = tbn('layer_c:0')
-            act = act / tf.reduce_max(act)
-
-            self._build_reg_c(act)
-
-        with tf.variable_scope('intracluster_distances'):
-            self._build_reg_d(act)
+        if self.lambda_d:
+            with tf.variable_scope('intracluster_distances'):
+                self._build_reg_d(act)
 
         self._build_total_loss()
 
@@ -177,29 +218,20 @@ class SAUCIE(object):
         :param reconstructed: the tensorflow op that was output by the decoder
         :param y: the tensorflow op for the target
         """
-        x_dists = self._pairwise_dists(y, y)
-        x_dists = tf.sqrt(x_dists + 1e-3)
+        refrecon = tf.boolean_mask(reconstructed, tf.equal(self.batches, 0))
+        refy = tf.boolean_mask(y, tf.equal(self.batches, 0))
+        l = (refy - refrecon)**2
+        self.loss_recon += tf.reduce_mean(l)
 
-        recon_dists = self._pairwise_dists(reconstructed, reconstructed)
-        recon_dists = tf.sqrt(recon_dists + 1e-3)
 
-        for i in range(2):
-            recon_ = tf.boolean_mask(reconstructed, tf.equal(self.batches, i))
-            y_ = tf.boolean_mask(y, tf.equal(self.batches, i))
+        nonrefrecon = tf.boolean_mask(reconstructed, tf.equal(self.batches, 1))
+        nonrefy = tf.boolean_mask(y, tf.equal(self.batches, 1))
 
-            # reconstruct the reference batch exactly
-            if i == 0:
-                l = (y_ - recon_)**2
-                self.loss_recon += tf.reduce_mean(l)
+        mean1, var1 = tf.nn.moments(nonrefrecon, 0)
+        mean2, var2 = tf.nn.moments(nonrefy, 0)
+        l = (((nonrefrecon - mean1) / tf.sqrt(var1)) - ((nonrefy - mean2) / tf.sqrt(var2)))**2
 
-            # reconstruct non-reference batches only to preserve pairwise distances
-            batch_x_rows = tf.boolean_mask(x_dists, tf.equal(self.batches, i))
-            batch_x_rowscols = tf.boolean_mask(tf.transpose(batch_x_rows), tf.equal(self.batches, i))
-
-            batch_recon_rows = tf.boolean_mask(recon_dists, tf.equal(self.batches, i))
-            batch_recon_rowscols = tf.boolean_mask(tf.transpose(batch_recon_rows), tf.equal(self.batches, i))
-
-            self.loss_recon += tf.reduce_mean((batch_x_rowscols - batch_recon_rowscols)**2)
+        self.loss_recon += tf.reduce_mean(l)
 
         self.loss_recon = nameop(self.loss_recon, 'loss_recon')
         tf.add_to_collection('losses', self.loss_recon)
@@ -246,16 +278,19 @@ class SAUCIE(object):
             return
 
         K = self._pairwise_dists(self.embedded, self.embedded)
-        K = tf.sqrt(K + 1e-3)
+        K = K / tf.reduce_max(K)
+        K = self._gaussian_kernel_matrix(K)
+        D = tf.diag(tf.pow(tf.reduce_sum(K, 1), -.5))
+        K = tf.eye(tf.shape(K)[0]) - tf.matmul(tf.matmul(D, K), D)
 
         # reference batch
         i = 0
         batch1_rows = tf.boolean_mask(K, tf.equal(self.batches, i))
         batch1_rowscols = tf.boolean_mask(tf.transpose(batch1_rows), tf.equal(self.batches, i))
 
-        K_b1 = tf.matrix_band_part(batch1_rowscols, 0, -1)  # just upper triangular part
+        K_b1 = batch1_rowscols
         n_rows_b1 = tf.cast(tf.reduce_sum(tf.boolean_mask(tf.ones_like(self.batches), tf.equal(self.batches, i))), tf.float32)
-        K_b1 = tf.reduce_sum(K_b1) / (n_rows_b1**2 + 1)
+        K_b1 = tf.reduce_sum(K_b1) / (n_rows_b1**2)
 
         var_within[i] = K_b1
         batch_sizes[i] = n_rows_b1
@@ -265,10 +300,9 @@ class SAUCIE(object):
         batch2_rows = tf.boolean_mask(K, tf.equal(self.batches, j))
         batch2_rowscols = tf.boolean_mask(tf.transpose(batch2_rows), tf.equal(self.batches, j))
 
-
-        K_b2 = tf.matrix_band_part(batch2_rowscols, 0, -1)  # just upper triangular part
+        K_b2 = batch2_rowscols
         n_rows_b2 = tf.cast(tf.reduce_sum(tf.boolean_mask(tf.ones_like(self.batches), tf.equal(self.batches, j))), tf.float32)
-        K_b2 = tf.reduce_sum(K_b2) / (n_rows_b2**2 + 1)
+        K_b2 = tf.reduce_sum(K_b2) / (n_rows_b2**2)
 
         var_within[j] = K_b2
         batch_sizes[j] = n_rows_b2
@@ -277,7 +311,7 @@ class SAUCIE(object):
         K_12 = tf.boolean_mask(tf.transpose(K_12), tf.equal(self.batches, j))
         K_12_ = tf.reduce_sum(tf.transpose(K_12))
 
-        mmd_pair = var_within[i] + var_within[j] - 2 * K_12_ / (batch_sizes[i] * batch_sizes[j] + 1)
+        mmd_pair = var_within[i] + var_within[j] - 2 * K_12_ / (batch_sizes[i] * batch_sizes[j])
         self.loss_b += tf.abs(mmd_pair)
 
         self.loss_b = self.lambda_b * (self.loss_b)
@@ -376,7 +410,7 @@ class SAUCIE(object):
 
             self.sess.run(ops, feed_dict=feed)
 
-    def get_loss(self, load):
+    def get_loss(self, load, batch_size=256):
         """
         Get the current losses over the dataset.
 
@@ -384,7 +418,7 @@ class SAUCIE(object):
         """
         losses = None
 
-        for i, batch in enumerate(load.iter_batches()):
+        for i, batch in enumerate(load.iter_batches(batch_size=batch_size)):
 
             feed = {tbn('x:0'): batch[0],
                     tbn('y:0'): batch[0],
