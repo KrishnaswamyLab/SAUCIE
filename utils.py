@@ -23,4 +23,3 @@ def obn(name):
     """Get the operation node in the default graph of the given name."""
     return tf.get_default_graph().get_operation_by_name(name)
 
-

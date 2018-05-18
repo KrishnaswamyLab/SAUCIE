@@ -49,6 +49,7 @@ class Loader(object):
         :param batch_size: the size of batch to yield each time as it's iterating
         """
         num_rows = self.data[0].shape[0]
+        end = 0
 
         for i in range(num_rows // batch_size):
             start = i * batch_size

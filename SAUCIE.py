@@ -1,4 +1,5 @@
 import glob
+import sys
 import os
 import argparse
 import pickle
@@ -17,7 +18,7 @@ def cluster_done():
     """Return True if clustering has already been done."""
     if os.path.exists(os.path.join(args.output_dir, 'clustered')):
         numfiles = len(glob.glob(os.path.join(args.output_dir, 'clustered', '*')))
-        numfiles_total = len(glob.glob(os.path.join(args.input_dir, '*.fcs')))
+        numfiles_total = len(glob.glob(os.path.join(args.input_dir, '*.{}'.format(args.format))))
         if numfiles == numfiles_total:
             return True
 
@@ -36,7 +37,7 @@ def batch_correction_training_done():
     """Return True if batch correction models have already been trained."""
     if os.path.exists(os.path.join(args.output_dir, 'models', 'batch_corrected')):
         numfiles = len(glob.glob(os.path.join(args.output_dir, 'models', 'batch_corrected', '*')))
-        numfiles_total = len(glob.glob(os.path.join(args.input_dir, '*.fcs')))
+        numfiles_total = len(glob.glob(os.path.join(args.input_dir, '*.{}'.format(args.format))))
         # -1 because there is 1 reference file
         print("Found {} batch-corrected models (out of {} total models)".format(numfiles, numfiles_total - 1))
         if numfiles == numfiles_total - 1:
@@ -48,7 +49,7 @@ def batch_correction_done():
     """Return True if batch correction has already been performed."""
     if os.path.exists(os.path.join(args.output_dir, 'batch_corrected')):
         numfiles = len(glob.glob(os.path.join(args.output_dir, 'batch_corrected', '*')))
-        numfiles_total = len(glob.glob(os.path.join(args.input_dir, '*.fcs')))
+        numfiles_total = len(glob.glob(os.path.join(args.input_dir, '*.{}'.format(args.format))))
         print("Found {} batch-corrected files (out of {} total files)".format(numfiles, numfiles_total))
         if numfiles == numfiles_total:
             return True
@@ -56,12 +57,19 @@ def batch_correction_done():
     return False
 
 def get_data(fn, sample=0, return_rawfile=False):
-    """Return DataFrame of an FCS file."""
-    meta, x = fcsparser.parse(fn)
-    if return_rawfile:
-        return x
+    """Return DataFrame of either a CSV or FCS file."""
+    if args.format == 'csv':
+        x = pd.read_csv(fn)
+    elif args.format == 'fcs':
+        meta, x = fcsparser.parse(fn)
+    else:
+        raise Exception("Improper format passed to get_data")
 
-    x = x.iloc[:, args.cols]
+    if return_rawfile:
+            return x
+
+    if args.cols:
+        x = x.iloc[:, args.cols]
 
     newvals = asinh(x)
     x = pd.DataFrame(newvals, columns=x.columns)
@@ -73,6 +81,16 @@ def get_data(fn, sample=0, return_rawfile=False):
         x = x.iloc[r, :]
 
     return x
+
+def write_data(fn, columns, data):
+    """Write DataFrame out to either a CSV or FCS file."""
+    if args.format == 'csv':
+        data.columns = columns
+        data.to_csv(fn, columns=columns, index=False)
+    elif args.format == 'fcs':
+        fcswrite.write_fcs(fn, columns, data, compat_chn_names=False, compat_percent=False, compat_negative=False)
+    else:
+        raise Exception("Improper format passed to get_data")
 
 def train_batch_correction(rawfiles):
     """Run batch correction on all files."""
@@ -100,7 +118,7 @@ def train_batch_correction(rawfiles):
             saucie = SAUCIE(input_dim=refx.shape[1], lambda_b=args.lambda_b)
 
             for i in range(args.num_iterations):
-                saucie.train(load, steps=1000, batch_size=200)
+                saucie.train(load, steps=100, batch_size=args.batch_size)
 
             saucie.save(folder=os.path.join(model_dir, nonrefname))
 
@@ -138,25 +156,34 @@ def output_batch_correction(rawfiles):
 
             recon, labels = saucie.get_layer(load, 'output')
 
-            recon = sinh(recon)
+            #recon = sinh(recon)
 
             # write out reference file
+            if args.cols:
+                inds = args.cols
+            else:
+                inds = range(recon.shape[1])
+
             if counter == 0:
                 reconref = recon[labels == 0]
                 rawdata = get_data(ref, return_rawfile=True)
-                for ind, c in enumerate(args.cols):
+                for ind, c in enumerate(inds):
                     rawdata.iloc[:, c] = reconref[:, ind]
 
                 outfileref = os.path.join(data_dir, refname)
-                fcswrite.write_fcs(outfileref, rawdata.columns.tolist(), rawdata)
+                write_data(outfileref, rawdata.columns.tolist(), rawdata)
+                #fcswrite.write_fcs(outfileref, rawdata.columns.tolist(), rawdata)
 
             # write out nonreference file
             reconnonref = recon[labels == 1]
             rawdata = get_data(nonref, return_rawfile=True)
-            for ind, c in enumerate(args.cols):
+
+            for ind, c in enumerate(inds):
                 rawdata.iloc[:, c] = reconnonref[:, ind]
+
             outfilenonref = os.path.join(data_dir, nonrefname)
-            fcswrite.write_fcs(outfilenonref, rawdata.columns.tolist(), rawdata)
+            write_data(outfilenonref, rawdata.columns.tolist(), rawdata)
+            #fcswrite.write_fcs(outfilenonref, rawdata.columns.tolist(), rawdata)
 
     except Exception as ex:
         # if it didn't run all the way through, clean everything up and remove it
@@ -184,7 +211,7 @@ def train_cluster(inputfiles):
 
             load = Loader(data=alldata, shuffle=True)
 
-            saucie.train(load, steps=1000, batch_size=400)
+            saucie.train(load, steps=100, batch_size=args.batch_size)
 
         saucie.save(folder=model_dir)
 
@@ -238,13 +265,17 @@ def output_cluster(inputfiles):
                 rows_equal_to_this_code = np.where(np.all(binarized == code, axis=1))[0]
                 clusters[rows_equal_to_this_code] = all_codes[code]
 
+
             embeddings = saucie.get_layer(load, 'embeddings')
 
             rawdata = get_data(f, return_rawfile=True)
             outcols = rawdata.columns.tolist() + ['Cluster', 'Embedding_SAUCIE1', 'Embedding_SAUCIE2']
             rawdata = pd.concat([rawdata, pd.DataFrame(clusters), pd.DataFrame(embeddings[:, 0]), pd.DataFrame(embeddings[:, 1])], axis=1)
+
             outfile = os.path.join(data_dir, fname)
-            fcswrite.write_fcs(outfile, outcols, rawdata)
+
+            #fcswrite.write_fcs(outfile, outcols, rawdata, compat_chn_names=False, compat_percent=False, compat_negative=False)
+            write_data(outfile, outcols, rawdata)
 
     except Exception as ex:
         # if it didn't run all the way through, clean everything up and remove it
@@ -262,19 +293,20 @@ def parse_args():
     parser.add_argument('--lambda_d', default=.2, type=float, help='if clustering, the value of lambda_d')
     parser.add_argument('--lambda_b', default=.1, type=float, help='if batch correcting, the value of lambda_b')
     parser.add_argument('--num_iterations', default=10, type=int, help='number of iterations to train (in thousands)')
-    parser.add_argument('--num_points_sample', default=100, type=int, 
+    parser.add_argument('--batch_size', default=100, type=int, help='number of rows in each SGD minibatch')
+    parser.add_argument('--num_points_sample', default=1000, type=int, 
         help='''when loading data into memory, number of points to sample from each file. if all of the data from all files fits into
         memory at the same time, set to 0 for no sampling.''')
+    parser.add_argument('--format', type=str, default='csv', help='either "csv" or "fcs"')
 
     args = parser.parse_args()
 
     # make sure there is a file for the columns to use
     if not os.path.exists(os.path.join(args.input_dir, 'cols_to_use.txt')):
-        raise Exception("The input directory must include a file named cols_to_use.txt with the column numbers of the FCS files \\\
-            that you want to analyze, one name per line (0-indexed).")
-
-    with open(os.path.join(args.input_dir, 'cols_to_use.txt')) as f:
-        args.cols = [int(line.strip()) for line in f]
+        args.cols = []
+    else:
+        with open(os.path.join(args.input_dir, 'cols_to_use.txt')) as f:
+            args.cols = [int(line.strip()) for line in f]
 
     if not os.path.exists(args.output_dir):
         os.mkdir(args.output_dir)
@@ -294,7 +326,7 @@ def parse_args():
 
 args = parse_args()
 
-rawfiles = sorted(glob.glob(os.path.join(args.input_dir, '*.fcs')))
+rawfiles = sorted(glob.glob(os.path.join(args.input_dir, '*.{}'.format(args.format))))
 
 ##################################
 ##################################
@@ -318,7 +350,7 @@ if args.batch_correct:
 # CLUSTERING
 if args.cluster:
     if args.batch_correct:
-        input_files = sorted(glob.glob(os.path.join(args.output_dir, 'batch_corrected', '*.fcs')))
+        input_files = sorted(glob.glob(os.path.join(args.output_dir, 'batch_corrected', '*.{}'.format(args.format))))
     else:
         input_files = rawfiles
 
