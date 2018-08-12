@@ -1,4 +1,5 @@
 from utils import *
+import sklearn.metrics
 import os
 
 def nameop(op, name):
@@ -489,11 +490,12 @@ class SAUCIE(object):
             return layer
 
     def get_cluster_merging(self, embedding, clusters):
+        if len(np.unique(clusters))==1: return clusters
+
         clusters = clusters - clusters.min()
         clusts_to_use = np.unique(clusters)
         mmdclusts = np.zeros((len(clusts_to_use), len(clusts_to_use)))
         for i1, clust1 in enumerate(clusts_to_use):
-            print(clust1)
             for i2, clust2 in enumerate(clusts_to_use[i1+1:]):
                 
                 ei = embedding[clusters==clust1]
@@ -523,7 +525,6 @@ class SAUCIE(object):
                 argmin1 = np.argsort(mmdclusts[i1,:])[1]
                 argmin2 = np.argsort(mmdclusts[i2,:])[1]
                 if argmin1==(i1+i2) and argmin2==i1 and i2>i1:
-                    print("Merging clusters {}, {}".format(i1,i2))
                     clust_to[i2] = i1
 
 
@@ -579,7 +580,7 @@ class SAUCIE(object):
         embedding = self.get_embedding(load)
         clusters = self.get_cluster_merging(embedding, clusters)
         num_clusters = len(np.unique(clusters))
-        
+
         if verbose:
             print("---- Num clusters: {} ---- Percent clustered: {:.3f} ----".format(num_clusters, 1. * rows_clustered / clusters.shape[0]))
 

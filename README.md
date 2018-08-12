@@ -13,6 +13,9 @@ SAUCIE is a python object that loads data from a numpy matrix and produces numpy
 ```
 data = ...
 
+from model import SAUCIE
+from loader import Loader
+
 saucie = SAUCIE(data.shape[1])
 loadtrain = Loader(data, shuffle=True)
 saucie.train(loadtrain, steps=1000)
