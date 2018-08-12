@@ -500,10 +500,6 @@ class SAUCIE(object):
                 
                 ei = embedding[clusters==clust1]
                 ej = embedding[clusters==clust2]
-                ri = list(range(ei.shape[0])); np.random.shuffle(ri); ri = ri[:1000];
-                rj = list(range(ej.shape[0])); np.random.shuffle(rj); rj = rj[:1000];
-                ei = ei[ri, :]
-                ej = ej[rj, :]
 
                 k1 = sklearn.metrics.pairwise.pairwise_distances(ei, ei)
                 k2 = sklearn.metrics.pairwise.pairwise_distances(ej, ej)
