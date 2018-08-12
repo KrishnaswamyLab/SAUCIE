@@ -20,6 +20,7 @@ class SAUCIE(object):
         lambda_c=0,
         layer_c=0,
         lambda_d=0,
+        layers=[512,256,128,2],
         activation=lrelu,
         learning_rate=.001,
         restore_folder='',
@@ -54,6 +55,7 @@ class SAUCIE(object):
         self.learning_rate = learning_rate
         self.save_folder = save_folder
         self.iteration = 0
+        self.layers = layers
 
         self.x = tf.placeholder(tf.float32, shape=[None, input_dim], name='x')
         self.y = tf.placeholder(tf.float32, shape=[None, input_dim], name='y')
@@ -108,61 +110,78 @@ class SAUCIE(object):
     def _build_layers(self):
         """Construct the layers of SAUCIE."""
         if self.lambda_b:
-            h1 = tf.layers.dense(self.x, 2000, activation=lrelu, name='encoder0', use_bias=True)
+            h1 = tf.layers.dense(self.x, self.layers[0], activation=lrelu, name='encoder0', use_bias=True)
 
-            h2 = tf.layers.dense(h1, 1000, activation=lrelu, name='encoder1', use_bias=True)
+            h2 = tf.layers.dense(h1, self.layers[1], activation=lrelu, name='encoder1', use_bias=True)
 
-            h3 = tf.layers.dense(h2, 500, activation=lrelu, name='encoder2', use_bias=True)
+            h3 = tf.layers.dense(h2, self.layers[2], activation=lrelu, name='encoder2', use_bias=True)
 
             self.embedded = tf.layers.dense(h3, 2, activation=tf.identity, name='embedding', use_bias=True)
             self.embedded = nameop(self.embedded, 'embeddings')
 
-            h5 = tf.layers.dense(self.embedded, 500, activation=lrelu, name='decoder0', use_bias=True)
+            h5 = tf.layers.dense(self.embedded, self.layers[2], activation=lrelu, name='decoder0', use_bias=True)
 
-            h6 = tf.layers.dense(h5, 1000, activation=lrelu, name='decoder1', use_bias=True)
+            h6 = tf.layers.dense(h5, self.layers[1], activation=lrelu, name='decoder1', use_bias=True)
 
-            h7 = tf.layers.dense(h6, 2000, activation=lrelu, name='decoder2', use_bias=True)
+            h7 = tf.layers.dense(h6, self.layers[0], activation=lrelu, name='decoder2', use_bias=True)
             h7 = nameop(h7, 'layer_c')
 
             self.reconstructed = tf.layers.dense(h7, self.input_dim, activation=tf.identity, name='recon', use_bias=True)
             self.reconstructed = nameop(self.reconstructed, 'output')
         elif self.lambda_c:
-            h1 = tf.layers.dense(self.x, 512, activation=lrelu, name='encoder0', use_bias=True)
+            h1 = tf.layers.dense(self.x, self.layers[0], activation=lrelu, name='encoder0', use_bias=True)
 
-            h2 = tf.layers.dense(h1, 256, activation=lrelu, name='encoder1', use_bias=True)
+            h2 = tf.layers.dense(h1, self.layers[1], activation=lrelu, name='encoder1', use_bias=True)
 
-            h3 = tf.layers.dense(h2, 128, activation=lrelu, name='encoder2', use_bias=True)
+            h3 = tf.layers.dense(h2, self.layers[2], activation=lrelu, name='encoder2', use_bias=True)
 
-            self.embedded = tf.layers.dense(h3, 2, activation=tf.identity, name='embedding', use_bias=True)
+            self.embedded = tf.layers.dense(h3, self.layers[3], activation=tf.identity, name='embedding', use_bias=True)
             self.embedded = nameop(self.embedded, 'embeddings')
 
-            h5 = tf.layers.dense(self.embedded, 128, activation=lrelu, name='decoder0', use_bias=True)
+            h5 = tf.layers.dense(self.embedded, self.layers[2], activation=lrelu, name='decoder0', use_bias=True)
 
-            h6 = tf.layers.dense(h5, 256, activation=lrelu, name='decoder1', use_bias=True)
+            h6 = tf.layers.dense(h5, self.layers[1], activation=lrelu, name='decoder1', use_bias=True)
 
-            h7 = tf.layers.dense(h6, 512, activation=tf.nn.relu, name='decoder2', use_bias=True)
+            h7 = tf.layers.dense(h6, self.layers[0], activation=tf.nn.relu, name='decoder2', use_bias=True)
             h7 = nameop(h7, 'layer_c')
 
             self.reconstructed = tf.layers.dense(h7, self.input_dim, activation=tf.identity, name='recon', use_bias=True)
             self.reconstructed = nameop(self.reconstructed, 'output')
         else:
-            h1 = tf.layers.dense(self.x, 2000, activation=lrelu, name='encoder0', use_bias=True)
+            # h1 = tf.layers.dense(self.x, 2000, activation=lrelu, name='encoder0', use_bias=True)
 
-            h2 = tf.layers.dense(h1, 1000, activation=lrelu, name='encoder1', use_bias=True)
+            # h2 = tf.layers.dense(h1, 1000, activation=lrelu, name='encoder1', use_bias=True)
 
-            h3 = tf.layers.dense(h2, 500, activation=lrelu, name='encoder2', use_bias=True)
+            # h3 = tf.layers.dense(h2, 500, activation=lrelu, name='encoder2', use_bias=True)
 
-            self.embedded = tf.layers.dense(h3, 2, activation=tf.identity, name='embedding', use_bias=True)
+            # self.embedded = tf.layers.dense(h3, 2, activation=tf.identity, name='embedding', use_bias=True)
+            # self.embedded = nameop(self.embedded, 'embeddings')
+
+            # h5 = tf.layers.dense(self.embedded, 500, activation=lrelu, name='decoder0', use_bias=True)
+
+            # h6 = tf.layers.dense(h5, 1000, activation=lrelu, name='decoder1', use_bias=True)
+
+            # h7 = tf.layers.dense(h6, 2000, activation=lrelu, name='decoder2', use_bias=True)
+            # h7 = nameop(h7, 'layer_c')
+
+            h1 = tf.layers.dense(self.x, self.layers[0], activation=lrelu, name='encoder0')
+
+            h2 = tf.layers.dense(h1, self.layers[1], activation=tf.nn.sigmoid, name='encoder1')
+
+            h3 = tf.layers.dense(h2, self.layers[2], activation=lrelu, name='encoder2')
+
+            self.embedded = tf.layers.dense(h3, self.layers[3], activation=tf.identity, name='embedding')
             self.embedded = nameop(self.embedded, 'embeddings')
 
-            h5 = tf.layers.dense(self.embedded, 500, activation=lrelu, name='decoder0', use_bias=True)
+            h5 = tf.layers.dense(self.embedded, self.layers[2], activation=lrelu, name='decoder0')
 
-            h6 = tf.layers.dense(h5, 1000, activation=lrelu, name='decoder1', use_bias=True)
+            h6 = tf.layers.dense(h5, self.layers[1], activation=lrelu, name='decoder1')
 
-            h7 = tf.layers.dense(h6, 2000, activation=lrelu, name='decoder2', use_bias=True)
+            h7 = tf.layers.dense(h6, self.layers[0], activation=lrelu, name='decoder2')
             h7 = nameop(h7, 'layer_c')
 
-            self.reconstructed = tf.layers.dense(h7, self.input_dim, activation=tf.identity, name='recon', use_bias=True)
+
+            self.reconstructed = tf.layers.dense(h7, self.input_dim, activation=tf.identity, name='recon')
             self.reconstructed = nameop(self.reconstructed, 'output')
 
     def _build_losses(self):
@@ -185,7 +204,6 @@ class SAUCIE(object):
 
                 act = tbn('layer_c:0')
                 act = act / tf.reduce_max(act)
-
                 self._build_reg_c(act)
 
         if self.lambda_d:
@@ -231,7 +249,7 @@ class SAUCIE(object):
         mean2, var2 = tf.nn.moments(nonrefy, 0)
         l = ( ((nonrefrecon - mean1) / (tf.sqrt(var1+1e-6)+1e-6)) - ((nonrefy - mean2) / (tf.sqrt(var2+1e-6)+1e-6)) )**2
 
-        self.loss_recon += tf.reduce_mean(l)
+        self.loss_recon += .01*tf.reduce_mean(l)
 
         self.loss_recon = nameop(self.loss_recon, 'loss_recon')
         tf.add_to_collection('losses', self.loss_recon)
@@ -277,11 +295,12 @@ class SAUCIE(object):
         if not self.lambda_b:
             return
 
-        K = self._pairwise_dists(self.embedded, self.embedded)
+        e = self.embedded / tf.reduce_mean(self.embedded)
+        K = self._pairwise_dists(e, e)
         K = K / tf.reduce_max(K)
         K = self._gaussian_kernel_matrix(K)
-        D = tf.diag(tf.pow(tf.reduce_sum(K, 1), -.5))
-        K = tf.eye(tf.shape(K)[0]) - tf.matmul(tf.matmul(D, K), D)
+        # D = tf.diag(tf.pow(tf.reduce_sum(K, 1), -.5))
+        # K = tf.eye(tf.shape(K)[0]) - tf.matmul(tf.matmul(D, K), D)
 
         # reference batch
         i = 0
@@ -469,6 +488,59 @@ class SAUCIE(object):
         else:
             return layer
 
+    def get_cluster_merging(self, embedding, clusters):
+        clusters = clusters - clusters.min()
+        clusts_to_use = np.unique(clusters)
+        mmdclusts = np.zeros((len(clusts_to_use), len(clusts_to_use)))
+        for i1, clust1 in enumerate(clusts_to_use):
+            print(clust1)
+            for i2, clust2 in enumerate(clusts_to_use[i1+1:]):
+                
+                ei = embedding[clusters==clust1]
+                ej = embedding[clusters==clust2]
+                ri = list(range(ei.shape[0])); np.random.shuffle(ri); ri = ri[:1000];
+                rj = list(range(ej.shape[0])); np.random.shuffle(rj); rj = rj[:1000];
+                ei = ei[ri, :]
+                ej = ej[rj, :]
+
+                k1 = sklearn.metrics.pairwise.pairwise_distances(ei, ei)
+                k2 = sklearn.metrics.pairwise.pairwise_distances(ej, ej)
+                k12 = sklearn.metrics.pairwise.pairwise_distances(ei, ej)
+
+                mmd = 0
+                for sigma in [.01, .1, 1., 10.]:
+                    k1_ = np.exp(- k1 / (sigma**2))
+                    k2_ = np.exp(- k2 / (sigma**2))
+                    k12_ = np.exp(- k12 / (sigma**2))
+
+                    mmd += calculate_mmd(k1_, k2_, k12_)
+                mmdclusts[i1,i1+i2+1] = mmd
+                mmdclusts[i1+i2+1,i1] = mmd
+
+        clust_to = {}
+        for i1 in range(mmdclusts.shape[0]):
+            for i2 in range(mmdclusts.shape[1]):
+                argmin1 = np.argsort(mmdclusts[i1,:])[1]
+                argmin2 = np.argsort(mmdclusts[i2,:])[1]
+                if argmin1==(i1+i2) and argmin2==i1 and i2>i1:
+                    print("Merging clusters {}, {}".format(i1,i2))
+                    clust_to[i2] = i1
+
+
+        for c in clust_to:
+            mask = clusters==c
+            clusters[mask.tolist()] = clust_to[c]
+
+        clusts_to_use_map = [c for c in clusts_to_use.tolist() if c not in clust_to]
+        clusts_to_use_map = {c:i for i,c in enumerate(clusts_to_use_map)}
+
+        for c in clusts_to_use_map:
+            mask = clusters==c
+            clusters[mask.tolist()] = clusts_to_use_map[c]
+
+
+        return clusters
+
     def get_clusters(self, load, binmin=100, max_clusters=1000, verbose=True):
         """
         Get cluster assignments from the ID regularization layer.
@@ -504,8 +576,13 @@ class SAUCIE(object):
             num_clusters += 1
             rows_clustered += rows_equal_to_this_code.shape[0]
 
+        embedding = self.get_embedding(load)
+        clusters = self.get_cluster_merging(embedding, clusters)
+        num_clusters = len(np.unique(clusters))
+        
         if verbose:
             print("---- Num clusters: {} ---- Percent clustered: {:.3f} ----".format(num_clusters, 1. * rows_clustered / clusters.shape[0]))
+
 
         return num_clusters, clusters
 
@@ -518,6 +595,33 @@ class SAUCIE(object):
         """Return the reconstruction layer."""
         reconstruction = self.get_layer(load, 'output')
         return reconstruction
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

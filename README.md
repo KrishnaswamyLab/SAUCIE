@@ -8,9 +8,25 @@ tensorflow 1.4.0
 numpy 1.13.3
 ```
 
+## Usage
+SAUCIE is a python object that loads data from a numpy matrix and produces numpy matrix output for the reconstruction, visualization, and/or clusters. Standard usage is to train a model from a numpy matrix and get the embedding, reconstruction, or clusters for that data. This can be done with:
+```
+data = ...
+
+saucie = SAUCIE(data.shape[1])
+loadtrain = Loader(data, shuffle=True)
+saucie.train(loadtrain, steps=1000)
+
+loadeval = Loader(data, shuffle=False)
+embedding = saucie.get_embedding(loadeval)
+number_of_clusters, clusters = saucie.get_clusters(loadeval)
+reconstruction = saucie.get_reconstruction(loadeval)
+
+... work with numpy results as desired ...
+```
+
 ## Running
-An example of how to use it for both batch correction and clustering, and optionally specifying the
-values of the regularization parameters:
+SAUCIE also comes with the option of running a full cohort of samples if the data is prepared in a specific way. Namely, for a folder of CSV (or FCS files if the flag --fcs is provided), an example of how to use SAUCIE for both batch correction and clustering is:
 ```
 python SAUCIE.py --input_dir path/to/input/files
                  --output_dir path/for/output/files
