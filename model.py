@@ -149,22 +149,6 @@ class SAUCIE(object):
             self.reconstructed = tf.layers.dense(h7, self.input_dim, activation=tf.identity, name='recon', use_bias=True)
             self.reconstructed = nameop(self.reconstructed, 'output')
         else:
-            # h1 = tf.layers.dense(self.x, 2000, activation=lrelu, name='encoder0', use_bias=True)
-
-            # h2 = tf.layers.dense(h1, 1000, activation=lrelu, name='encoder1', use_bias=True)
-
-            # h3 = tf.layers.dense(h2, 500, activation=lrelu, name='encoder2', use_bias=True)
-
-            # self.embedded = tf.layers.dense(h3, 2, activation=tf.identity, name='embedding', use_bias=True)
-            # self.embedded = nameop(self.embedded, 'embeddings')
-
-            # h5 = tf.layers.dense(self.embedded, 500, activation=lrelu, name='decoder0', use_bias=True)
-
-            # h6 = tf.layers.dense(h5, 1000, activation=lrelu, name='decoder1', use_bias=True)
-
-            # h7 = tf.layers.dense(h6, 2000, activation=lrelu, name='decoder2', use_bias=True)
-            # h7 = nameop(h7, 'layer_c')
-
             h1 = tf.layers.dense(self.x, self.layers[0], activation=lrelu, name='encoder0')
 
             h2 = tf.layers.dense(h1, self.layers[1], activation=tf.nn.sigmoid, name='encoder1')
@@ -300,8 +284,6 @@ class SAUCIE(object):
         K = self._pairwise_dists(e, e)
         K = K / tf.reduce_max(K)
         K = self._gaussian_kernel_matrix(K)
-        # D = tf.diag(tf.pow(tf.reduce_sum(K, 1), -.5))
-        # K = tf.eye(tf.shape(K)[0]) - tf.matmul(tf.matmul(D, K), D)
 
         # reference batch
         i = 0
@@ -496,10 +478,9 @@ class SAUCIE(object):
         clusts_to_use = np.unique(clusters)
         mmdclusts = np.zeros((len(clusts_to_use), len(clusts_to_use)))
         for i1, clust1 in enumerate(clusts_to_use):
-            for i2, clust2 in enumerate(clusts_to_use[i1+1:]):
-                
-                ei = embedding[clusters==clust1]
-                ej = embedding[clusters==clust2]
+            for i2, clust2 in enumerate(clusts_to_use[i1 + 1:]):
+                ei = embedding[clusters == clust1]
+                ej = embedding[clusters == clust2]
                 ri = list(range(ei.shape[0])); np.random.shuffle(ri); ri = ri[:1000];
                 rj = list(range(ej.shape[0])); np.random.shuffle(rj); rj = rj[:1000];
                 ei = ei[ri, :]
@@ -516,20 +497,20 @@ class SAUCIE(object):
                     k12_ = np.exp(- k12 / (sigma**2))
 
                     mmd += calculate_mmd(k1_, k2_, k12_)
-                mmdclusts[i1,i1+i2+1] = mmd
-                mmdclusts[i1+i2+1,i1] = mmd
+                mmdclusts[i1, i1 + i2 + 1] = mmd
+                mmdclusts[i1 + i2 + 1, i1] = mmd
 
         clust_to = {}
         for i1 in range(mmdclusts.shape[0]):
             for i2 in range(mmdclusts.shape[1]):
-                argmin1 = np.argsort(mmdclusts[i1,:])[1]
-                argmin2 = np.argsort(mmdclusts[i2,:])[1]
-                if argmin1==(i1+i2) and argmin2==i1 and i2>i1:
+                argmin1 = np.argsort(mmdclusts[i1, :])[1]
+                argmin2 = np.argsort(mmdclusts[i2, :])[1]
+                if argmin1 == (i1 + i2) and argmin2 == i1 and i2 > i1:
                     clust_to[i2] = i1
 
 
         for c in clust_to:
-            mask = clusters==c
+            mask = clusters == c
             clusters[mask.tolist()] = clust_to[c]
 
         clusts_to_use_map = [c for c in clusts_to_use.tolist() if c not in clust_to]
