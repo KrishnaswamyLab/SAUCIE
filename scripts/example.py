@@ -1,13 +1,12 @@
-from model import SAUCIE
-from loader import Loader
+import SAUCIE
 import numpy as np
 import matplotlib.pyplot as plt
 
 if __name__ == "__main__":
     x = np.concatenate([np.random.uniform(-3, -2, (1000, 40)), np.random.uniform(2, 3, (1000, 40))], axis=0)
-    load = Loader(x, shuffle=False)
+    load = SAUCIE.Loader(x, shuffle=False)
 
-    saucie = SAUCIE(x.shape[1], lambda_c=.2, lambda_d=.4)
+    saucie = SAUCIE.SAUCIE(x.shape[1], lambda_c=.2, lambda_d=.4)
 
 
     saucie.train(load, 100)
