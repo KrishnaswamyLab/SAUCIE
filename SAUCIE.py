@@ -8,10 +8,12 @@ import fcswrite
 import numpy as np
 import pandas as pd
 import tensorflow as tf
-from model import SAUCIE
-from loader import Loader
 import shutil
-from utils import asinh, sinh
+
+from .model import SAUCIE
+from .loader import Loader
+from .utils import asinh, sinh
+
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
 def cluster_done():
@@ -320,67 +322,54 @@ def parse_args():
     return args
 
 
-##################################
-##################################
-# PREPROCESSING
+if __name__ == "__main__":
+    ##################################
+    ##################################
+    # PREPROCESSING
 
-args = parse_args()
+    args = parse_args()
 
-rawfiles = sorted(glob.glob(os.path.join(args.input_dir, '*.{}'.format(args.format))))
+    rawfiles = sorted(glob.glob(os.path.join(args.input_dir, '*.{}'.format(args.format))))
 
-##################################
-##################################
-# BATCH CORRECTION
-# check if we are supposed to do batch correction and whether it already has been done
-if args.batch_correct:
-    if not batch_correction_training_done():
-        print("Training batch correction models.")
-        train_batch_correction(rawfiles)
-    else:
-        print("Found batch correction models.\n")
-
-    if not batch_correction_done():
-        print("Outputing batch corrected data.")
-        output_batch_correction(rawfiles)
-    else:
-        print("Found batch corrected data.\n")
-
-##################################
-##################################
-# CLUSTERING
-if args.cluster:
+    ##################################
+    ##################################
+    # BATCH CORRECTION
+    # check if we are supposed to do batch correction and whether it already has been done
     if args.batch_correct:
-        input_files = sorted(glob.glob(os.path.join(args.output_dir, 'batch_corrected', '*.{}'.format(args.format))))
-    else:
-        input_files = rawfiles
+        if not batch_correction_training_done():
+            print("Training batch correction models.")
+            train_batch_correction(rawfiles)
+        else:
+            print("Found batch correction models.\n")
 
-    if not cluster_training_done():
-        print("Training cluster model.")
-        train_cluster(input_files)
-    else:
-        print("Found cluster model.\n")
+        if not batch_correction_done():
+            print("Outputing batch corrected data.")
+            output_batch_correction(rawfiles)
+        else:
+            print("Found batch corrected data.\n")
 
-    if not cluster_done():
-        print("Outputing clustered data.")
-        output_cluster(input_files)
-    else:
-        print("Found clustered data.\n")
+    ##################################
+    ##################################
+    # CLUSTERING
+    if args.cluster:
+        if args.batch_correct:
+            input_files = sorted(glob.glob(os.path.join(args.output_dir, 'batch_corrected', '*.{}'.format(args.format))))
+        else:
+            input_files = rawfiles
 
+        if not cluster_training_done():
+            print("Training cluster model.")
+            train_cluster(input_files)
+        else:
+            print("Found cluster model.\n")
 
-
-
-print("Finished training models and outputing data!")
-
-
-
-
-
-
-
-
-
-
-
-
+        if not cluster_done():
+            print("Outputing clustered data.")
+            output_cluster(input_files)
+        else:
+            print("Found clustered data.\n")
 
 
+
+
+    print("Finished training models and outputing data!")
