@@ -8,19 +8,35 @@ tensorflow 1.4.0
 numpy 1.13.3
 ```
 
+## Installation
+
+Download with
+
+```
+git clone https://github.com/KrishnaswamyLab/SAUCIE
+```
+
+install requirements with
+
+```
+pip install -r SAUCIE/requirements.txt
+```
+
+and then add SAUCIE to your Python path (e.g. by running Python in the same directory in which you ran `git clone`, or by adding that directory with `sys.path.append("/path/to/git/")`.
+
+
 ## Usage
 SAUCIE is a python object that loads data from a numpy matrix and produces numpy matrix output for the reconstruction, visualization, and/or clusters. Standard usage is to train a model from a numpy matrix and get the embedding, reconstruction, or clusters for that data. This can be done with:
 ```
 data = ...
 
-from model import SAUCIE
-from loader import Loader
+import SAUCIE
 
-saucie = SAUCIE(data.shape[1])
-loadtrain = Loader(data, shuffle=True)
+saucie = SAUCIE.SAUCIE(data.shape[1])
+loadtrain = SAUCIE.Loader(data, shuffle=True)
 saucie.train(loadtrain, steps=1000)
 
-loadeval = Loader(data, shuffle=False)
+loadeval = SAUCIE.Loader(data, shuffle=False)
 embedding = saucie.get_embedding(loadeval)
 number_of_clusters, clusters = saucie.get_clusters(loadeval)
 reconstruction = saucie.get_reconstruction(loadeval)
@@ -28,8 +44,11 @@ reconstruction = saucie.get_reconstruction(loadeval)
 ... work with numpy results as desired ...
 ```
 
+## Example
+See `scripts/example.py` for an example of running SAUCIE on data.
+
 ## Running
-SAUCIE also comes with the option of running a full cohort of samples if the data is prepared in a specific way. Namely, for a folder of CSV (or FCS files if the flag --fcs is provided), an example of how to use SAUCIE for both batch correction and clustering is:
+SAUCIE also comes with the option of running a full cohort of samples if the data is prepared in a specific way under `scripts/SAUCIE.py`. Namely, for a folder of CSV (or FCS files if the flag --fcs is provided), an example of how to use SAUCIE for both batch correction and clustering is:
 ```
 python SAUCIE.py --input_dir path/to/input/files
                  --output_dir path/for/output/files
