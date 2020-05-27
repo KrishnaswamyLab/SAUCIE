@@ -8,10 +8,11 @@ import fcswrite
 import numpy as np
 import pandas as pd
 import tensorflow as tf
-from model import SAUCIE
-from loader import Loader
 import shutil
-from utils import asinh, sinh
+
+import SAUCIE
+from SAUCIE.utils import asinh, sinh
+
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
 def cluster_done():
@@ -111,11 +112,11 @@ def train_batch_correction(rawfiles):
             alldata = np.concatenate([refx.as_matrix(), nonrefx.as_matrix()], axis=0)
             alllabels = np.concatenate([np.zeros(refx.shape[0]), np.ones(nonrefx.shape[0])], axis=0)
 
-            load = Loader(data=alldata, labels=alllabels, shuffle=True)
+            load = SAUCIE.Loader(data=alldata, labels=alllabels, shuffle=True)
 
             tf.reset_default_graph()
 
-            saucie = SAUCIE(input_dim=refx.shape[1], lambda_b=args.lambda_b)
+            saucie = SAUCIE.SAUCIE(input_dim=refx.shape[1], lambda_b=args.lambda_b)
 
             for i in range(args.num_iterations):
                 saucie.train(load, steps=100, batch_size=args.batch_size)
@@ -148,11 +149,11 @@ def output_batch_correction(rawfiles):
             alldata = np.concatenate([refx.as_matrix(), nonrefx.as_matrix()], axis=0)
             alllabels = np.concatenate([np.zeros(refx.shape[0]), np.ones(nonrefx.shape[0])], axis=0)
 
-            load = Loader(data=alldata, labels=alllabels, shuffle=False)
+            load = SAUCIE.Loader(data=alldata, labels=alllabels, shuffle=False)
 
             tf.reset_default_graph()
             restore_folder = os.path.join(model_dir, nonrefname)
-            saucie = SAUCIE(None, restore_folder=restore_folder)
+            saucie = SAUCIE.SAUCIE(None, restore_folder=restore_folder)
 
             recon, labels = saucie.get_layer(load, 'output')
 
@@ -200,7 +201,7 @@ def train_cluster(inputfiles):
 
         tf.reset_default_graph()
         x = get_data(inputfiles[0], sample=2)
-        saucie = SAUCIE(input_dim=x.shape[1], lambda_d=args.lambda_d, lambda_c=args.lambda_c)
+        saucie = SAUCIE.SAUCIE(input_dim=x.shape[1], lambda_d=args.lambda_d, lambda_c=args.lambda_c)
 
         for i in range(args.num_iterations):
             alldata = []
@@ -209,7 +210,7 @@ def train_cluster(inputfiles):
                 alldata.append(x)
             alldata = np.concatenate(alldata, axis=0)
 
-            load = Loader(data=alldata, shuffle=True)
+            load = SAUCIE.Loader(data=alldata, shuffle=True)
 
             saucie.train(load, steps=100, batch_size=args.batch_size)
 
@@ -230,13 +231,13 @@ def output_cluster(inputfiles):
         os.mkdir(data_dir)
 
         tf.reset_default_graph()
-        saucie = SAUCIE(None, restore_folder=model_dir)
+        saucie = SAUCIE.SAUCIE(None, restore_folder=model_dir)
 
         print("Finding all binary codes")
         all_codes = {}
         for counter, f in enumerate(inputfiles):
             x = get_data(f)
-            load = Loader(data=x, shuffle=False)
+            load = SAUCIE.Loader(data=x, shuffle=False)
 
             acts = saucie.get_layer(load, 'layer_c')
             acts = acts / acts.max()
@@ -255,7 +256,7 @@ def output_cluster(inputfiles):
             fname = os.path.split(f)[-1]
             print("Outputing file {}".format(counter))
             x = get_data(f)
-            load = Loader(data=x, shuffle=False)
+            load = SAUCIE.Loader(data=x, shuffle=False)
             acts = saucie.get_layer(load, 'layer_c')
             acts = acts / acts.max()
             binarized = np.where(acts > .000001, 1, 0)
@@ -320,67 +321,54 @@ def parse_args():
     return args
 
 
-##################################
-##################################
-# PREPROCESSING
+if __name__ == "__main__":
+    ##################################
+    ##################################
+    # PREPROCESSING
 
-args = parse_args()
+    args = parse_args()
 
-rawfiles = sorted(glob.glob(os.path.join(args.input_dir, '*.{}'.format(args.format))))
+    rawfiles = sorted(glob.glob(os.path.join(args.input_dir, '*.{}'.format(args.format))))
 
-##################################
-##################################
-# BATCH CORRECTION
-# check if we are supposed to do batch correction and whether it already has been done
-if args.batch_correct:
-    if not batch_correction_training_done():
-        print("Training batch correction models.")
-        train_batch_correction(rawfiles)
-    else:
-        print("Found batch correction models.\n")
-
-    if not batch_correction_done():
-        print("Outputing batch corrected data.")
-        output_batch_correction(rawfiles)
-    else:
-        print("Found batch corrected data.\n")
-
-##################################
-##################################
-# CLUSTERING
-if args.cluster:
+    ##################################
+    ##################################
+    # BATCH CORRECTION
+    # check if we are supposed to do batch correction and whether it already has been done
     if args.batch_correct:
-        input_files = sorted(glob.glob(os.path.join(args.output_dir, 'batch_corrected', '*.{}'.format(args.format))))
-    else:
-        input_files = rawfiles
+        if not batch_correction_training_done():
+            print("Training batch correction models.")
+            train_batch_correction(rawfiles)
+        else:
+            print("Found batch correction models.\n")
 
-    if not cluster_training_done():
-        print("Training cluster model.")
-        train_cluster(input_files)
-    else:
-        print("Found cluster model.\n")
+        if not batch_correction_done():
+            print("Outputing batch corrected data.")
+            output_batch_correction(rawfiles)
+        else:
+            print("Found batch corrected data.\n")
 
-    if not cluster_done():
-        print("Outputing clustered data.")
-        output_cluster(input_files)
-    else:
-        print("Found clustered data.\n")
+    ##################################
+    ##################################
+    # CLUSTERING
+    if args.cluster:
+        if args.batch_correct:
+            input_files = sorted(glob.glob(os.path.join(args.output_dir, 'batch_corrected', '*.{}'.format(args.format))))
+        else:
+            input_files = rawfiles
 
+        if not cluster_training_done():
+            print("Training cluster model.")
+            train_cluster(input_files)
+        else:
+            print("Found cluster model.\n")
 
-
-
-print("Finished training models and outputing data!")
-
-
-
-
-
-
-
-
-
-
-
-
+        if not cluster_done():
+            print("Outputing clustered data.")
+            output_cluster(input_files)
+        else:
+            print("Found clustered data.\n")
 
 
+
+
+    print("Finished training models and outputing data!")

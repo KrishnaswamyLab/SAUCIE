@@ -1,4 +1,4 @@
-from utils import *
+from .utils import *
 
 class Loader(object):
     """A loader class designed to help provide batches one at a time in random order during training, or in the same order all at once when evaluating results."""
