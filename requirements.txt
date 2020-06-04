@@ -1,0 +1,7 @@
+tensorflow==1.12
+fcsparser
+fcswrite
+numpy
+pandas
+scikit-learn
+matplotlib
