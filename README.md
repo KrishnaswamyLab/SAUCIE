@@ -45,7 +45,7 @@ reconstruction = saucie.get_reconstruction(loadeval)
 ```
 
 ## Example
-See `scripts/example.py` for an example of running SAUCIE on data.
+See `scripts/example.py` for an example of running SAUCIE on data. You can also see a tutorial on Google Colab [here](https://colab.research.google.com/github/KrishnaswamyLab/SingleCellWorkshop/blob/master/exercises/Deep_Learning/notebooks/02_Answers_Exploratory_analysis_of_single_cell_data_with_SAUCIE.ipynb).
 
 ## Running
 SAUCIE also comes with the option of running a full cohort of samples if the data is prepared in a specific way under `scripts/SAUCIE.py`. Namely, for a folder of CSV (or FCS files if the flag --fcs is provided), an example of how to use SAUCIE for both batch correction and clustering is:
