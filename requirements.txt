@@ -1,4 +1,4 @@
-tensorflow==1.12
+tensorflow==1.15.4
 fcsparser
 fcswrite
 numpy
