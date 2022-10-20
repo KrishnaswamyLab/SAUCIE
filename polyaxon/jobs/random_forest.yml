@@ -1,0 +1,54 @@
+---
+version: 1.1
+kind: component
+tags: [examples]
+name: random_forest
+
+# more here: https://polyaxon.com/docs/core/specification/io/
+inputs:
+  - name: n_estimators
+    type: int
+    value: 3
+    isOptional: true
+  - name: max_features
+    type: int
+    value: 3
+    isOptional: true
+  - name: min_samples_leaf
+    type: int
+    value: 80
+    isOptional: true
+
+outputs:
+  - name: accuracy_mean
+    type: float
+    description: Avg ACC from cross validation
+  - name: accuracy
+    type: float
+    description: ACC from each fold in cross validation
+  - name: accuracies
+    type: any
+    description: Histogram of accuracies in cross validation
+  - name: accuracy_std
+    type: float
+    description: ACC std from cross validation
+  - name: model
+    type: artifacts
+    description: Cross validation top model
+
+run:
+  kind: job
+  container:
+    image: quay.io/kiiaed/plx-test:random_forest
+    workingDir: "{{ globals.artifacts_path }}/repo"
+    command:
+    - python
+    args:
+    - -m
+    - bin.random_forest
+    - --n_estimators
+    - "{{ n_estimators }}"
+    - --max_features
+    - "{{ max_features }}"
+    - --min_samples_leaf
+    - "{{ min_samples_leaf }}"

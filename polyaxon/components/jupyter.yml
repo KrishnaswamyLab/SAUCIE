@@ -1,0 +1,58 @@
+version: 1.1
+kind: component
+name: notebook
+inputs:
+- name: image
+  isOptional: true
+  type: str
+  value: jupyter/scipy-notebook
+- name: theme
+  isOptional: true
+  type: str
+  value: "JupyterLab Dark"
+  options: ["JupyterLab Dark", "JupyterLab Light"]
+run:
+  kind: service
+  connections:
+    - cache
+    - data
+    - kiaed01
+  ports: [8888]
+  volumes:
+    - name: workspace
+      persistentVolumeClaim:
+        claimName: workspace-pvc
+  init:
+    - container:
+        name: ensure-workspace
+        image: alpine
+        command: ['sh', '-c', '(mkdir -p /workspace/{{ globals.project_name }} && chown -R 1000:0 /workspace/{{ globals.project_name }} && ls -lah /workspace)']
+        volumeMounts:
+        - name: workspace
+          mountPath: /workspace
+  container:
+    image: "{{image}}"
+    workingDir: "/workspace/{{ globals.project_name }}"
+    env:
+      - name: POLYAXON_RUN_OUTPUTS_PATH
+        value: "{{ globals.run_outputs_path }}"
+    command: ["/bin/bash", "-c"]
+    args:
+    - >-
+      mkdir -p ~/.jupyter/lab/user-settings/@jupyterlab/apputils-extension
+      && (echo '{"theme": "{{theme}}"}' >> ~/.jupyter/lab/user-settings/@jupyterlab/apputils-extension/themes.jupyterlab-settings)
+      && exec jupyter lab
+      --no-browser
+      --ip=0.0.0.0
+      --port={{globals.ports[0]}}
+      --allow-root
+      --NotebookApp.allow_origin=*
+      --NotebookApp.trust_xheaders=True
+      --NotebookApp.token=
+      --NotebookApp.base_url={{globals.base_url}}
+      --NotebookApp.notebook_dir=/workspace/{{ globals.project_name }}
+      --NotebookApp.quit_button=False
+      --LabApp.base_url={{globals.base_url}}
+    volumeMounts:
+    - name: workspace
+      mountPath: /workspace

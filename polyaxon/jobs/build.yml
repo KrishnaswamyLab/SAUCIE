@@ -1,0 +1,52 @@
+version: 1.1
+kind: operation
+name: build_minimal
+
+patchStrategy: pre_merge
+
+component:
+  version: 1.1
+  kind: component
+  name: build
+  description: "Build container images with Polyaxon dockerizer"
+  tags: ["build"]
+
+  inputs:
+  - name: dockerfile
+    isOptional: true
+    type: str
+    value: Dockerfile
+
+  outputs:
+  - name: destination
+    type: image
+    connection: quay-dockerizer
+
+  plugins:
+    docker: true
+
+  run:
+    kind: job
+    connections: ["quay-dockerizer"]
+    init:
+      - container:
+            name: move-dockerfile
+            image: alpine
+            command: ['sh', '-c', '(ls -lah {{ globals.artifacts_path }}/repo && cp {{ globals.artifacts_path }}/repo/{{ params.dockerfile.value }} {{ globals.artifacts_path }}/repo/Dockerfile)']
+            volumeMounts:
+            - name: artifacts-context
+              mountPath: /plx-context/artifacts
+    container:
+      image: polyaxon/polyaxon-dockerizer:1.1.9
+      imagePullPolicy: "Always"
+      args: [
+        "build-and-push",
+        "-c",
+        "{{ globals.artifacts_path }}/repo",
+        "-d",
+        "{{ connections[\"quay-dockerizer\"].url + '/' + destination }}",
+        "{{ nocache }}"
+      ]
+      env:
+      - name: PYTHONUNBUFFERED
+        value: "true"

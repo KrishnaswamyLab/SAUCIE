@@ -1,0 +1,54 @@
+version: 1.1
+kind: component
+name: vscode
+
+inputs:
+- name: gist
+  isOptional: true
+  type: str
+  value: ""
+
+run:
+  kind: service
+  connections:
+    - cache
+    - data
+    - kiaed01
+  ports: [8080]
+  rewritePath: true
+  volumes:
+    - name: workspace
+      persistentVolumeClaim:
+        claimName: workspace-pvc
+    - name: settings
+      emptyDir: {}
+  init:
+    - container:
+        name: ensure-workspace
+        image: alpine
+        command: ['sh', '-c', '(mkdir -p /workspace/{{ globals.project_name }} && chown -R 1000:0 /workspace/{{ globals.project_name }} && ls -lah /workspace)']
+        volumeMounts:
+        - name: workspace
+          mountPath: /workspace
+    - container:
+        name: configure-gist
+        image: gmrukwa/vscode
+        command: ['/bin/bash', '-c']
+        args:
+        - >-
+          echo '{"sync.autoDownload": true, "sync.autoUpload": false, "sync.quietSync": true, "sync.gist": "{{ gist }}", "sync.forceDownload": true}' > ~/.local/share/code-server/User/settings.json
+        volumeMounts:
+        - name: settings
+          mountPath: /home/coder/.local/share/code-server/User
+  container:
+    image: gmrukwa/vscode
+    env:
+      - name: POLYAXON_RUN_OUTPUTS_PATH
+        value: "{{ globals.run_outputs_path }}"
+    workingDir: "/workspace/{{ globals.project_name }}"
+    args: ["--auth", "none", "--disable-telemetry"]
+    volumeMounts:
+    - name: workspace
+      mountPath: /workspace
+    - name: settings
+      mountPath: /home/coder/.local/share/code-server/User

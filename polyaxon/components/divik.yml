@@ -1,0 +1,41 @@
+---
+version: 1.1
+kind: component
+tags: [examples]
+name: divik
+
+# more here: https://polyaxon.com/docs/core/specification/io/
+inputs:
+  - name: config
+    type: path
+  - name: data
+    type: path
+  - name: xy
+    type: path
+
+run:
+  kind: job
+  connections:
+    - cache
+    - data
+    - kiaed01
+  container:
+    image: gmrukwa/divik:2.5.7
+    workingDir: "{{ globals.artifacts_path }}/repo"
+    command:
+    - /bin/bash
+    - -c
+    args:
+    - |
+        apt-get update && apt-get install -y -q gcc python3-dev \
+        && pip install polyaxon==1.1.9 natsort --no-cache-dir \
+        && fit-clusters --config="{{ config }}" \
+          --param='load_data.path="{{ data }}"' \
+          --param='load_xy.path="{{ xy }}"' \
+          --param='experiment.destination="{{ globals.run_outputs_path }}"' \
+        && python -m bin.register_experiment \
+          --param-file {{ globals.run_outputs_path }}/config.gin \
+          --data-file {{ data }} \
+          --data-file {{ xy }} \
+          --metric-file {{ globals.run_outputs_path }}/summary.json \
+          --capture-png

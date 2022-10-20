@@ -1,0 +1,9 @@
+isPreset: true
+patchStrategy: isnull
+runPatch:
+  container:
+    resources:
+      limits:
+        nvidia.com/gpu: 1
+      requests:
+        nvidia.com/gpu: 1

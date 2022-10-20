@@ -1,0 +1,35 @@
+---
+version: 1.1
+kind: component
+tags: [examples, workspace, python]
+name: python-workspace-experiment
+
+inputs:
+- name: image
+  isOptional: true
+  value: tensorflow/tensorflow:2.3.1
+  type: str
+- name: module
+  description: Module of the script to run
+  type: str
+- name: arguments
+  type: str
+  isOptional: true
+  value: ""
+
+run:
+  kind: job
+  connections:
+    - cache
+    - data
+    - kiaed01
+    - workspace
+  container:
+    image: "{{ image }}"
+    env:
+      - name: POLYAXON_RUN_OUTPUTS_PATH
+        value: "{{ globals.run_outputs_path }}"
+    workingDir: '/workspace/{{ globals.project_name }}'
+    command: ["/bin/bash", "-c"]
+    args:
+    - python -m {{ module }} {{ arguments }}

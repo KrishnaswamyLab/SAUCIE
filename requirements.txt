@@ -1,7 +1,7 @@
-tensorflow==1.12
-fcsparser
-fcswrite
-numpy
-pandas
-scikit-learn
-matplotlib
+certifi==2019.11.28
+joblib==0.14.1
+natsort==7.0.1
+numpy==1.18.2
+scikit-learn==0.22.2.post1
+scipy==1.4.1
+sklearn==0.0

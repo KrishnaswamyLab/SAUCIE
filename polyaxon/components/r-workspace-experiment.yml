@@ -1,0 +1,37 @@
+---
+version: 1.1
+kind: component
+tags: [examples, workspace, r]
+name: r-experiment
+
+inputs:
+- name: image
+  isOptional: true
+  value: quay.io/kiiaed/plx-test:r
+  type: str
+- name: script
+  description: Path of the script to run
+  type: str
+- name: arguments
+  type: str
+  isOptional: true
+  value: ""
+
+run:
+  kind: job
+  connections:
+    - cache
+    - data
+    - kiaed01
+    - workspace
+  container:
+    image: "{{ image }}"
+    env:
+      - name: POLYAXON_RUN_OUTPUTS_PATH
+        value: "{{ globals.run_outputs_path }}"
+    workingDir: '/workspace/{{ globals.project_name }}'
+    command: ["/bin/bash", "-c"]
+    args:
+    - >-
+      Rscript -e "packrat::restore()"
+      && exec Rscript {{ script }} {{ arguments }}

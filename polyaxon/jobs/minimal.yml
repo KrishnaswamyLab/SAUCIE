@@ -1,0 +1,32 @@
+---
+version: 1.1
+kind: component
+tags: [examples]
+name: minimal
+
+run:
+  kind: job
+  container:
+    image: quay.io/kiiaed/plx-test:minimal
+    env:
+      - name: POLYAXON_RUN_OUTPUTS_PATH
+        value: "{{ globals.run_outputs_path }}"
+    workingDir: "{{ globals.artifacts_path }}/repo"
+    resources:
+      cpu:
+        # your calculations will be throttled to not exceed
+        limits: 1
+        # that's the minimal amount you will be guaranteed
+        # try to keep that reasonably low to launch multiple experiments in parallel
+        requests: 0.5
+      memory:
+        # your calculations will fail if exceed the memory limit
+        limits: 4000
+        # that's the minimal amount you will be guaranteed
+        # try to keep that reasonably low to launch multiple experiments in parallel
+        requests: 1000
+    command:
+      - python
+      - -u
+      - -m
+      - bin.minimal

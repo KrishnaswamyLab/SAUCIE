@@ -1,0 +1,9 @@
+isPreset: true
+patchStrategy: pre_merge
+runPatch:
+  container:
+    env:
+      - name: POLYAXON_RUN_OUTPUTS_PATH
+        value: "{{ globals.run_outputs_path }}"
+      - name: PYTHONUNBUFFERED
+        value: "TRUE"

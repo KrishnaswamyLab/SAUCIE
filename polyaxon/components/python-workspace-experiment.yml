@@ -1,0 +1,34 @@
+---
+version: 1.1
+kind: component
+tags: [examples, python, repo]
+name: r-experiment
+
+inputs:
+- name: image
+  isOptional: true
+  value: tensorflow/tensorflow:2.3.1
+  type: str
+- name: module
+  description: Module of the script to run
+  type: str
+- name: arguments
+  type: str
+  isOptional: true
+  value: ""
+
+run:
+  kind: job
+  connections:
+    - cache
+    - data
+    - kiaed01
+  container:
+    image: "{{ image }}"
+    env:
+      - name: POLYAXON_RUN_OUTPUTS_PATH
+        value: "{{ globals.run_outputs_path }}"
+    workingDir: "{{ globals.artifacts_path }}/repo"
+    command: ["/bin/bash", "-c"]
+    args:
+    - python -m {{ module }} {{ arguments }}

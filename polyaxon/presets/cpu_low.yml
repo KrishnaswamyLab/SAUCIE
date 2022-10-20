@@ -1,0 +1,17 @@
+isPreset: true
+patchStrategy: isnull
+runPatch:
+  container:
+    resources:
+      limits:
+        # your calculations will be throttled to not exceed
+        cpu: 1
+        # your calculations will fail if exceed the memory limit
+        memory: 4Gi
+      requests:
+        # that's the minimal amount you will be guaranteed
+        # try to keep that reasonably low to launch multiple experiments in parallel
+        cpu: 0.5
+        # that's the minimal amount you will be guaranteed
+        # try to keep that reasonably low to launch multiple experiments in parallel
+        memory: 1Gi
