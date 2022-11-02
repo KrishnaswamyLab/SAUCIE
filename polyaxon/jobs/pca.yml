@@ -1,7 +1,9 @@
 ---
 version: 1.1
 kind: component
-tags: [pca]
+tags: 
+  - pca
+  - metrics
 name: pca
 
 # more here: https://polyaxon.com/docs/core/specification/io/
@@ -25,8 +27,9 @@ outputs:
   
 run:
   kind: job
-  image: quay.io/kiiaed/saucie:build
-    workingDir: "{{ globals.artifacts_path }}/repo"
+  container:
+    image: quay.io/kiiaed/saucie:build
+    workingDir: '{{ globals.artifacts_path }}/repo'
     command:
     - python
     args:
