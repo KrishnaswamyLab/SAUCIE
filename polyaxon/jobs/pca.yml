@@ -1,0 +1,36 @@
+---
+version: 1.1
+kind: component
+tags: [pca]
+name: pca
+
+# more here: https://polyaxon.com/docs/core/specification/io/
+inputs:
+  - name: data
+    type: path
+    value: /data/gluster/saucie/PBMC/pbmc_filtered.csv
+    isOptional: true
+  - name: true_labels
+    type: path
+    value: /data/gluster/saucie/PBMC/true_labels.csv
+    isOptional: true
+
+outputs:
+  - name: model
+    type: artifacts
+    description: PCA model
+  - name: pca
+    type: artifacts
+    description: PCA dimensionality reduction
+  
+run:
+  kind: job
+  image: quay.io/kiiaed/saucie:pca
+    workingDir: "{{ globals.artifacts_path }}/repo"
+    command:
+    - python
+    args:
+    - --data
+    - "{{ data }}"
+    - true_labels
+    - "{{ true_labels }}"
