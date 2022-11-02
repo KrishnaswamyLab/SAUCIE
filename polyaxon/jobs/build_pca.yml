@@ -1,0 +1,80 @@
+version: 1.1
+kind: operation
+params:
+  destination:
+    value: divae:dev
+  dockerfile:
+    value: docker/base.Dockerfile
+  private_repo:
+    value: 'true'
+  nocache:
+    value: 'true'
+runPatch:
+  init:
+    - git:
+        url: https://github.com/amrukwa/SAUCIE
+        revision: 67d76de280913f8777abd86ec9398b841bf3caea
+      connection: repo
+hubRef: kiiaed/build
+component:
+  version: 1.1
+  kind: component
+  name: build
+  description: Build container images with Polyaxon dockerizer
+  tags:
+    - build
+  plugins:
+    docker: true
+  inputs:
+    - name: dockerfile
+      type: str
+      value: Dockerfile
+      isOptional: true
+    - name: nocache
+      type: bool
+      value: false
+      isOptional: true
+      isFlag: true
+    - name: private_repo
+      type: bool
+      value: true
+      isOptional: true
+      argFormat: '{{ ''private-repo'' if private_repo else ''repo'' }}'
+  outputs:
+    - name: destination
+      type: image
+      connection: quay-dockerizer
+  run:
+    kind: job
+    connections:
+      - quay-dockerizer
+    init:
+      - container:
+          command:
+            - sh
+            - '-c'
+            - >-
+              (ls -lah {{ globals.artifacts_path }}/{{
+              params.private_repo.as_arg }} && cp {{ globals.artifacts_path
+              }}/{{ params.private_repo.as_arg }}/{{ params.dockerfile.value }}
+              {{ globals.artifacts_path }}/{{ params.private_repo.as_arg
+              }}/Dockerfile)
+          image: alpine
+          name: move-dockerfile
+          volumeMounts:
+            - name: artifacts-context
+              mountPath: /plx-context/artifacts
+    container:
+      args:
+        - build-and-push
+        - '-c'
+        - '{{ globals.artifacts_path }}/{{ params.private_repo.as_arg }}'
+        - '-d'
+        - '{{ connections["quay-dockerizer"].url + ''/'' + destination }}'
+        - '{{ nocache }}'
+      env:
+        - name: PYTHONUNBUFFERED
+          value: 'true'
+      image: polyaxon/polyaxon-dockerizer:1.1.9
+      imagePullPolicy: Always
+      name: polyaxon-main
