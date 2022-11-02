@@ -19,13 +19,13 @@ outputs:
   - name: model
     type: artifacts
     description: PCA model
-  - name: pca
+  - name: reduced_dims
     type: artifacts
     description: PCA dimensionality reduction
   
 run:
   kind: job
-  image: quay.io/kiiaed/saucie:pca
+  image: quay.io/kiiaed/saucie:build
     workingDir: "{{ globals.artifacts_path }}/repo"
     command:
     - python
