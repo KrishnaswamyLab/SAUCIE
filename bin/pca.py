@@ -3,7 +3,6 @@ import os
 import pickle
 
 import numpy as np
-import pandas as pd
 from polyaxon.tracking import Run
 from sklearn.decomposition import PCA
 
@@ -24,9 +23,8 @@ def model(X):
 
 
 def load_data(fname):
-    if fname.lower().endswith(".csv"):
-        data = pd.read_csv(fname)
-        data = data.to_numpy()
+    if fname.lower().endswith(".npy"):
+        data = np.load()
         return data
     raise ValueError(f'Unsupported file format: {fname}')
 

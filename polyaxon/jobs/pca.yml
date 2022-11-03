@@ -10,11 +10,11 @@ name: pca_test
 inputs:
   - name: data
     type: path
-    value: /data/gluster/saucie/PBMC/pbmc_filtered.csv
+    value: /data/gluster/saucie/PBMC/pbmc_filtered.npy
     isOptional: true
   - name: true_labels
     type: path
-    value: /data/gluster/saucie/PBMC/true_labels.csv
+    value: /data/gluster/saucie/PBMC/true_labels.npy
     isOptional: true
 
 outputs:
