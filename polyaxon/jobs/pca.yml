@@ -4,7 +4,7 @@ kind: component
 tags: 
   - pca
   - metrics
-name: pca
+name: pca_test
 
 # more here: https://polyaxon.com/docs/core/specification/io/
 inputs:
@@ -33,7 +33,9 @@ run:
     command:
     - python
     args:
+    - -m
+    - bin.pca
     - --data
     - "{{ data }}"
-    - true_labels
+    - --true_labels
     - "{{ true_labels }}"
