@@ -1,5 +1,8 @@
 # SAUCIE
 An implementation of SAUCIE (Sparse Autoencoder for Clustering, Imputing, and Embedding) in Tensorflow.
+***
+This repository is a fork of the [original SAUCIE implementation](https://github.com/KrishnaswamyLab/SAUCIE). The authors let me use it for my Bachelor thesis and bump the used tensorflow version to 2, as well as build a web application using the model architecture.  
+The code used for measuring the goodness of the dimensionality reduction can be found [here](https://github.com/pachterlab/CBP_2021).
 
 ## Requirements
 All tests performed with:
@@ -13,7 +16,7 @@ numpy 1.13.3
 Download with
 
 ```
-git clone https://github.com/KrishnaswamyLab/SAUCIE
+git clone https://github.com/amrukwa/SAUCIE.git
 ```
 
 install requirements with
