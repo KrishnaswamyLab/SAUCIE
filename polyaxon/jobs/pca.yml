@@ -4,7 +4,7 @@ kind: component
 tags: 
   - pca
   - metrics
-name: pca_debug
+name: pca_test_run
 
 # more here: https://polyaxon.com/docs/core/specification/io/
 inputs:
@@ -33,17 +33,17 @@ run:
   container:
     image: quay.io/kiiaed/saucie:build
     workingDir: '{{ globals.artifacts_path }}/repo'
-    command:
-    - /bin/sh
-    args:
-    - -c
-    - sleep 1h
     # command:
-    # - python
+    # - /bin/sh
     # args:
-    # - -m
-    # - bin.pca
-    # - --data
-    # - "{{ data }}"
-    # - --true_labels
-    # - "{{ true_labels }}"
+    # - -c
+    # - sleep 1h
+    command:
+    - python
+    args:
+    - -m
+    - bin.pca
+    - --data
+    - "{{ data }}"
+    - --true_labels
+    - "{{ true_labels }}"
