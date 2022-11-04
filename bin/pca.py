@@ -24,7 +24,7 @@ def model(X):
 
 def load_data(fname):
     if fname.lower().endswith(".npy"):
-        data = np.load()
+        data = np.load(fname)
         return data
     raise ValueError(f'Unsupported file format: {fname}')
 
