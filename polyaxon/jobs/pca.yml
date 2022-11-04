@@ -27,6 +27,9 @@ outputs:
   
 run:
   kind: job
+  connections:
+      - cache
+      - data
   container:
     image: quay.io/kiiaed/saucie:build
     workingDir: '{{ globals.artifacts_path }}/repo'
@@ -35,8 +38,9 @@ run:
     args:
     - -c
     - sleep 1h
+    # command:
     # - python
-    args:
+    # args:
     # - -m
     # - bin.pca
     # - --data

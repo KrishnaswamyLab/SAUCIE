@@ -6,7 +6,7 @@ params:
   dockerfile:
     value: docker/base.Dockerfile
   private_repo:
-    value: 'true'
+    value: 'false'
   nocache:
     value: 'true'
 runPatch:
@@ -37,7 +37,7 @@ component:
       isFlag: true
     - name: private_repo
       type: bool
-      value: true
+      value: false
       isOptional: true
       argFormat: '{{ ''private-repo'' if private_repo else ''repo'' }}'
   outputs:
