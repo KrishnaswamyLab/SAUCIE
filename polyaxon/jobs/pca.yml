@@ -33,11 +33,6 @@ run:
   container:
     image: quay.io/kiiaed/saucie:build
     workingDir: '{{ globals.artifacts_path }}/repo'
-    # command:
-    # - /bin/sh
-    # args:
-    # - -c
-    # - sleep 1h
     command:
     - python
     args:
