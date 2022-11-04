@@ -1,0 +1,42 @@
+version: 1.1
+kind: component
+name: file-browser
+tags:
+  - utils
+run:
+  kind: service
+  connections:
+    - cache
+    - data
+    # - kiaed01
+  ports:
+    - 80
+  volumes:
+    - name: workspace
+      persistentVolumeClaim:
+        claimName: workspace-pvc
+  init:
+    - container:
+        name: ensure-workspace
+        image: alpine
+        command:
+          - sh
+          - '-c'
+          - >-
+            (mkdir -p /workspace/{{ globals.project_name }} && chown -R 1000:0
+            /workspace/{{ globals.project_name }} && ls -lah /workspace)
+        volumeMounts:
+          - name: workspace
+            mountPath: /workspace
+  container:
+    image: filebrowser/filebrowser
+    env:
+      - name: POLYAXON_RUN_OUTPUTS_PATH
+        value: '{{ globals.run_outputs_path }}'
+    args:
+      - '--noauth'
+      - '--baseurl={{globals.base_url}}'
+      - '--root=/'
+    volumeMounts:
+      - name: workspace
+        mountPath: /workspace
