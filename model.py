@@ -1,6 +1,11 @@
-from .utils import *
-import sklearn.metrics
 import os
+
+import numpy as np
+import sklearn.metrics
+import tensorflow as tf
+
+from utils import calculate_mmd, lrelu, obn, tbn
+
 
 def nameop(op, name):
     """
@@ -17,31 +22,36 @@ class SAUCIE(object):
     """The SAUCIE model."""
 
     def __init__(self, input_dim,
-        lambda_b=0,
-        lambda_c=0,
-        layer_c=0,
-        lambda_d=0,
-        layers=[512,256,128,2],
-        activation=lrelu,
-        learning_rate=.001,
-        restore_folder='',
-        save_folder='',
-        limit_gpu_fraction=.3,
-        no_gpu=False):
+                 lambda_b=0,
+                 lambda_c=0,
+                 layer_c=0,
+                 lambda_d=0,
+                 layers=[512, 256, 128, 2],
+                 activation=lrelu,
+                 learning_rate=.001,
+                 restore_folder='',
+                 save_folder='',
+                 limit_gpu_fraction=.3,
+                 no_gpu=False):
         """
         The SAUCIE model.
 
         :param input_dim: the dimensionality of the data
         :param lambda_b: the coefficient for the MMD regularization
         :param lambda_c: the coefficient for the ID regularization
-        :param layer_c: the index of layer_dimensions that ID regularization should be applied to (usually len(layer_dimensions)-2)
-        :param lambda_d: the coefficient for the intracluster distance regularization
+        :param layer_c: the index of layer_dimensions that ID regularization
+                        should be applied to (usually len(layer_dimensions)-2)
+        :param lambda_d: the coefficient for the
+                         intracluster distance regularization
         :param activation: the nonlinearity to use in the hidden layers
         :param loss: the loss function to use, one of 'mse' or 'bce'
         :param learning_rate: the learning_rate to use while training
-        :param restore_folder: string of the directory where a previous model is saved, if present will return a new Python object
+        :param restore_folder: string of the directory where a previous model
+                               is saved, if present will return
+                               a new Python object
                                with the old SAUCIE tensorflow graph
-        :param save_folder: string of the directory to save SAUCIE to by default when save() is called
+        :param save_folder: string of the directory
+                            to save SAUCIE to by default when save() is called
         """
         if restore_folder:
             self._restore(restore_folder)
@@ -61,8 +71,11 @@ class SAUCIE(object):
         self.x = tf.placeholder(tf.float32, shape=[None, input_dim], name='x')
         self.y = tf.placeholder(tf.float32, shape=[None, input_dim], name='y')
         self.batches = tf.placeholder(tf.int32, shape=[None], name='batches')
-        self.is_training = tf.placeholder(tf.bool, shape=[], name='is_training')
-        self.learning_rate_tensor = tf.placeholder(tf.float32, shape=[], name='learning_rate_tensor')
+        self.is_training = tf.placeholder(tf.bool,
+                                          shape=[], name='is_training')
+        self.learning_rate_tensor = tf.placeholder(tf.float32,
+                                                   shape=[],
+                                                   name='learning_rate_tensor')
 
         self._build()
         self.init_session(limit_gpu_fraction, no_gpu)
@@ -91,7 +104,8 @@ class SAUCIE(object):
         """
         Restore the tensorflow graph stored in restore_folder.
 
-        :param restore_folder: the location of the directory where the saved SAUCIE model resides.
+        :param restore_folder: the location of the directory
+                               where the saved SAUCIE model resides.
         """
         tf.reset_default_graph()
         self.init_session()
@@ -111,62 +125,92 @@ class SAUCIE(object):
     def _build_layers(self):
         """Construct the layers of SAUCIE."""
         if self.lambda_b:
-            h1 = tf.layers.dense(self.x, self.layers[0], activation=lrelu, name='encoder0', use_bias=True)
+            h1 = tf.layers.dense(self.x, self.layers[0], activation=lrelu,
+                                 name='encoder0', use_bias=True)
 
-            h2 = tf.layers.dense(h1, self.layers[1], activation=lrelu, name='encoder1', use_bias=True)
+            h2 = tf.layers.dense(h1, self.layers[1], activation=lrelu,
+                                 name='encoder1', use_bias=True)
 
-            h3 = tf.layers.dense(h2, self.layers[2], activation=lrelu, name='encoder2', use_bias=True)
+            h3 = tf.layers.dense(h2, self.layers[2], activation=lrelu,
+                                 name='encoder2', use_bias=True)
 
-            self.embedded = tf.layers.dense(h3, 2, activation=tf.identity, name='embedding', use_bias=True)
+            self.embedded = tf.layers.dense(h3, 2, activation=tf.identity,
+                                            name='embedding', use_bias=True)
             self.embedded = nameop(self.embedded, 'embeddings')
 
-            h5 = tf.layers.dense(self.embedded, self.layers[2], activation=lrelu, name='decoder0', use_bias=True)
+            h5 = tf.layers.dense(self.embedded, self.layers[2],
+                                 activation=lrelu, name='decoder0',
+                                 use_bias=True)
 
-            h6 = tf.layers.dense(h5, self.layers[1], activation=lrelu, name='decoder1', use_bias=True)
+            h6 = tf.layers.dense(h5, self.layers[1], activation=lrelu,
+                                 name='decoder1', use_bias=True)
 
-            h7 = tf.layers.dense(h6, self.layers[0], activation=lrelu, name='decoder2', use_bias=True)
+            h7 = tf.layers.dense(h6, self.layers[0], activation=lrelu,
+                                 name='decoder2', use_bias=True)
             h7 = nameop(h7, 'layer_c')
 
-            self.reconstructed = tf.layers.dense(h7, self.input_dim, activation=tf.identity, name='recon', use_bias=True)
+            self.reconstructed = tf.layers.dense(h7, self.input_dim,
+                                                 activation=tf.identity,
+                                                 name='recon', use_bias=True)
             self.reconstructed = nameop(self.reconstructed, 'output')
         elif self.lambda_c:
-            h1 = tf.layers.dense(self.x, self.layers[0], activation=lrelu, name='encoder0', use_bias=True)
+            h1 = tf.layers.dense(self.x, self.layers[0], activation=lrelu,
+                                 name='encoder0', use_bias=True)
 
-            h2 = tf.layers.dense(h1, self.layers[1], activation=lrelu, name='encoder1', use_bias=True)
+            h2 = tf.layers.dense(h1, self.layers[1], activation=lrelu,
+                                 name='encoder1', use_bias=True)
 
-            h3 = tf.layers.dense(h2, self.layers[2], activation=lrelu, name='encoder2', use_bias=True)
+            h3 = tf.layers.dense(h2, self.layers[2], activation=lrelu,
+                                 name='encoder2', use_bias=True)
 
-            self.embedded = tf.layers.dense(h3, self.layers[3], activation=tf.identity, name='embedding', use_bias=True)
+            self.embedded = tf.layers.dense(h3, self.layers[3],
+                                            activation=tf.identity,
+                                            name='embedding', use_bias=True)
             self.embedded = nameop(self.embedded, 'embeddings')
 
-            h5 = tf.layers.dense(self.embedded, self.layers[2], activation=lrelu, name='decoder0', use_bias=True)
+            h5 = tf.layers.dense(self.embedded, self.layers[2],
+                                 activation=lrelu, name='decoder0',
+                                 use_bias=True)
 
-            h6 = tf.layers.dense(h5, self.layers[1], activation=lrelu, name='decoder1', use_bias=True)
+            h6 = tf.layers.dense(h5, self.layers[1], activation=lrelu,
+                                 name='decoder1', use_bias=True)
 
-            h7 = tf.layers.dense(h6, self.layers[0], activation=tf.nn.relu, name='decoder2', use_bias=True)
+            h7 = tf.layers.dense(h6, self.layers[0], activation=tf.nn.relu,
+                                 name='decoder2', use_bias=True)
             h7 = nameop(h7, 'layer_c')
 
-            self.reconstructed = tf.layers.dense(h7, self.input_dim, activation=tf.identity, name='recon', use_bias=True)
+            self.reconstructed = tf.layers.dense(h7, self.input_dim,
+                                                 activation=tf.identity,
+                                                 name='recon', use_bias=True)
             self.reconstructed = nameop(self.reconstructed, 'output')
         else:
-            h1 = tf.layers.dense(self.x, self.layers[0], activation=lrelu, name='encoder0')
+            h1 = tf.layers.dense(self.x, self.layers[0], activation=lrelu,
+                                 name='encoder0')
 
-            h2 = tf.layers.dense(h1, self.layers[1], activation=tf.nn.sigmoid, name='encoder1')
+            h2 = tf.layers.dense(h1, self.layers[1], activation=tf.nn.sigmoid,
+                                 name='encoder1')
 
-            h3 = tf.layers.dense(h2, self.layers[2], activation=lrelu, name='encoder2')
+            h3 = tf.layers.dense(h2, self.layers[2], activation=lrelu,
+                                 name='encoder2')
 
-            self.embedded = tf.layers.dense(h3, self.layers[3], activation=tf.identity, name='embedding')
+            self.embedded = tf.layers.dense(h3, self.layers[3],
+                                            activation=tf.identity,
+                                            name='embedding')
             self.embedded = nameop(self.embedded, 'embeddings')
 
-            h5 = tf.layers.dense(self.embedded, self.layers[2], activation=lrelu, name='decoder0')
+            h5 = tf.layers.dense(self.embedded, self.layers[2],
+                                 activation=lrelu, name='decoder0')
 
-            h6 = tf.layers.dense(h5, self.layers[1], activation=lrelu, name='decoder1')
+            h6 = tf.layers.dense(h5, self.layers[1], activation=lrelu,
+                                 name='decoder1')
 
-            h7 = tf.layers.dense(h6, self.layers[0], activation=lrelu, name='decoder2')
+            h7 = tf.layers.dense(h6, self.layers[0], activation=lrelu,
+                                 name='decoder2')
             h7 = nameop(h7, 'layer_c')
 
-
-            self.reconstructed = tf.layers.dense(h7, self.input_dim, activation=tf.identity, name='recon')
+            self.reconstructed = tf.layers.dense(h7, self.input_dim,
+                                                 activation=tf.identity,
+                                                 name='recon')
             self.reconstructed = nameop(self.reconstructed, 'output')
 
     def _build_losses(self):
@@ -204,7 +248,8 @@ class SAUCIE(object):
 
     def _build_reconstruction_loss(self, reconstructed, y):
         """
-        Build the reconstruction loss part of the network if batch correction isn't being performed.
+        Build the reconstruction loss part of the network
+        if batch correction isn't being performed.
 
         :param reconstructed: the tensorflow op that was output by the decoder
         :param y: the tensorflow op for the target
@@ -216,34 +261,36 @@ class SAUCIE(object):
 
     def _build_reconstruction_loss_mmd(self, reconstructed, y):
         """
-        Build the reconstruction loss part of the network if batch correction is being performed.
+        Build the reconstruction loss part of the network
+        if batch correction is being performed.
 
         :param reconstructed: the tensorflow op that was output by the decoder
         :param y: the tensorflow op for the target
         """
         refrecon = tf.boolean_mask(reconstructed, tf.equal(self.batches, 0))
         refy = tf.boolean_mask(y, tf.equal(self.batches, 0))
-        l = (refy - refrecon)**2
-        self.loss_recon += tf.reduce_mean(l)
-
+        loss = (refy - refrecon)**2
+        self.loss_recon += tf.reduce_mean(loss)
 
         nonrefrecon = tf.boolean_mask(reconstructed, tf.equal(self.batches, 1))
         nonrefy = tf.boolean_mask(y, tf.equal(self.batches, 1))
 
         mean1, var1 = tf.nn.moments(nonrefrecon, 0)
         mean2, var2 = tf.nn.moments(nonrefy, 0)
-        l = ( ((nonrefrecon - mean1) / (tf.sqrt(var1+1e-6)+1e-6)) - ((nonrefy - mean2) / (tf.sqrt(var2+1e-6)+1e-6)) )**2
+        loss = ( ((nonrefrecon - mean1) / (tf.sqrt(var1+1e-6)+1e-6)) - ((nonrefy - mean2) / (tf.sqrt(var2+1e-6)+1e-6)) )**2
 
-        self.loss_recon += .01*tf.reduce_mean(l)
+        self.loss_recon += .01*tf.reduce_mean(loss)
 
         self.loss_recon = nameop(self.loss_recon, 'loss_recon')
         tf.add_to_collection('losses', self.loss_recon)
 
     def _build_reg_d(self, act):
         """
-        Calculate the intracluster distances in the original data given binary-like codes.
+        Calculate the intracluster distances in the original data
+        given binary-like codes.
 
-        :param act: the codes that will be binarized and used to determine cluster assignment
+        :param act: the codes that will be binarized
+        and used to determine cluster assignment
         """
         out = self._pairwise_dists(act, act)
         same_cluster = self._gaussian_kernel_matrix(out)
@@ -288,10 +335,13 @@ class SAUCIE(object):
         # reference batch
         i = 0
         batch1_rows = tf.boolean_mask(K, tf.equal(self.batches, i))
-        batch1_rowscols = tf.boolean_mask(tf.transpose(batch1_rows), tf.equal(self.batches, i))
+        batch1_rowscols = tf.boolean_mask(tf.transpose(batch1_rows),
+                                          tf.equal(self.batches, i))
 
         K_b1 = batch1_rowscols
-        n_rows_b1 = tf.cast(tf.reduce_sum(tf.boolean_mask(tf.ones_like(self.batches), tf.equal(self.batches, i))), tf.float32)
+        n_rows_b1 = tf.reduce_sum(tf.boolean_mask(tf.ones_like(self.batches),
+                                                  tf.equal(self.batches, i)))
+        n_rows_b1 = tf.cast(n_rows_b1, tf.float32)
         K_b1 = tf.reduce_sum(K_b1) / (n_rows_b1**2)
 
         var_within[i] = K_b1
@@ -300,10 +350,13 @@ class SAUCIE(object):
         # nonreference batches
         j = 1
         batch2_rows = tf.boolean_mask(K, tf.equal(self.batches, j))
-        batch2_rowscols = tf.boolean_mask(tf.transpose(batch2_rows), tf.equal(self.batches, j))
+        batch2_rowscols = tf.boolean_mask(tf.transpose(batch2_rows),
+                                          tf.equal(self.batches, j))
 
         K_b2 = batch2_rowscols
-        n_rows_b2 = tf.cast(tf.reduce_sum(tf.boolean_mask(tf.ones_like(self.batches), tf.equal(self.batches, j))), tf.float32)
+        n_rows_b2 = tf.reduce_sum(tf.boolean_mask(tf.ones_like(self.batches),
+                                                  tf.equal(self.batches, j)))
+        n_rows_b2 = tf.cast(n_rows_b2, tf.float32)
         K_b2 = tf.reduce_sum(K_b2) / (n_rows_b2**2)
 
         var_within[j] = K_b2
@@ -312,8 +365,9 @@ class SAUCIE(object):
         K_12 = tf.boolean_mask(K, tf.equal(self.batches, i))
         K_12 = tf.boolean_mask(tf.transpose(K_12), tf.equal(self.batches, j))
         K_12_ = tf.reduce_sum(tf.transpose(K_12))
+        k_12_coeff = K_12_ / (batch_sizes[i] * batch_sizes[j])
 
-        mmd_pair = var_within[i] + var_within[j] - 2 * K_12_ / (batch_sizes[i] * batch_sizes[j])
+        mmd_pair = var_within[i] + var_within[j] - 2 * k_12_coeff
         self.loss_b += tf.abs(mmd_pair)
 
         self.loss_b = self.lambda_b * (self.loss_b)
@@ -323,22 +377,26 @@ class SAUCIE(object):
     def _build_total_loss(self):
         """Collect all of the losses together."""
         self.loss = 0
-        for l in tf.get_collection('losses'):
-            self.loss += l
+        for loss in tf.get_collection('losses'):
+            self.loss += loss
         self.loss = nameop(self.loss, 'loss')
 
     def _gaussian_kernel_matrix(self, dist):
         """Multi-scale RBF kernel."""
-        sigmas = [1e-6, 1e-5, 1e-4, 1e-3, 1e-2, 1e-1, 1, 5, 10, 15, 20, 25, 30, 35, 100, 1e3, 1e4, 1e5, 1e6]
+        sigmas = [1e-6, 1e-5, 1e-4, 1e-3, 1e-2, 1e-1, 1,
+                  5, 10, 15, 20, 25, 30, 35, 100, 1e3,
+                  1e4, 1e5, 1e6]
 
         beta = 1. / (2. * (tf.expand_dims(sigmas, 1)))
 
         s = tf.matmul(beta, tf.reshape(dist, (1, -1)))
 
-        return tf.reshape(tf.reduce_sum(tf.exp(-s), 0), tf.shape(dist)) / len(sigmas)
+        return tf.reshape(tf.reduce_sum(tf.exp(-s), 0),
+                          tf.shape(dist)) / len(sigmas)
 
     def _pairwise_dists(self, x1, x2):
-        """Helper function to calculate pairwise distances between tensors x1 and x2."""
+        """Helper function to calculate pairwise distances
+        between tensors x1 and x2."""
         r1 = tf.reduce_sum(x1 * x1, 1, keep_dims=True)
         r2 = tf.reduce_sum(x2 * x2, 1, keep_dims=True)
 
@@ -350,9 +408,11 @@ class SAUCIE(object):
         """
         Initialize the tensorflow graph that's been created.
 
-        :param sess: the session to use while initializing, if different from SAUCIE's sess member
+        :param sess: the session to use while initializing,
+                     if different from SAUCIE's sess member
         """
-        if not sess: sess = self.sess
+        if not sess:
+            sess = self.sess
 
         self.saver = tf.train.Saver(tf.global_variables(), max_to_keep=1)
 
@@ -362,24 +422,31 @@ class SAUCIE(object):
         """
         Save the current state of SAUCIE.
 
-        :param iteration: the number of training steps SAUCIE has taken, which distinguishes the saved states
+        :param iteration: the number of training steps SAUCIE has taken,
+                          which distinguishes the saved states
                           throughout training
         :param saver: the saver instance to use
         :param sess: the session to save
         :param folder: the location to save SAUCIE's state to
         """
-        if not iteration: iteration = self.iteration
-        if not saver: saver = self.saver
-        if not sess: sess = self.sess
-        if not folder: folder = self.save_folder
+        if not iteration:
+            iteration = self.iteration
+        if not saver:
+            saver = self.saver
+        if not sess:
+            sess = self.sess
+        if not folder:
+            folder = self.save_folder
 
         savefile = os.path.join(folder, 'SAUCIE')
         saver.save(sess, savefile, write_meta_graph=True)
         print("Model saved to {}".format(savefile))
 
     def get_loss_names(self):
-        """Return the strings of the loss names in the order they're printed during training."""
-        losses = [tns.name[:-2].replace('loss_', '').split('/')[-1] for tns in tf.get_collection('losses')]
+        """Return the strings of the loss names
+        in the order they're printed during training."""
+        losses = [tns.name[:-2].replace('loss_', '').split('/')[-1]
+                  for tns in tf.get_collection('losses')]
         return "Losses: {}".format(' '.join(losses))
 
     def train(self, load, steps, batch_size=256):
@@ -406,7 +473,8 @@ class SAUCIE(object):
 
             # if using batch-correction, must have labels
             if (self.lambda_b and len(batch) < 2):
-                raise Exception("If using lambda_b (batch correction), you must provide each point's batch as a label")
+                raise Exception("""If using lambda_b (batch correction),
+                 you must provide each point's batch as a label""")
 
             ops = [obn('train_op')]
 
@@ -428,12 +496,14 @@ class SAUCIE(object):
             if len(batch) == 2:
                 feed[tbn('batches:0')] = batch[1]
 
-            batch_losses = self.sess.run(tf.get_collection('losses'), feed_dict=feed)
+            batch_losses = self.sess.run(tf.get_collection('losses'),
+                                         feed_dict=feed)
 
             if not losses:
                 losses = batch_losses
             else:
-                losses = [loss + batch_loss for loss, batch_loss in zip(losses, batch_losses)]
+                losses = [loss + batch_loss
+                          for loss, batch_loss in zip(losses, batch_losses)]
 
         losses = [loss / float(i + 1) for loss in losses]
         lstring = ' '.join(['{:.3f}'.format(loss) for loss in losses])
@@ -472,7 +542,8 @@ class SAUCIE(object):
             return layer
 
     def get_cluster_merging(self, embedding, clusters):
-        if len(np.unique(clusters))==1: return clusters
+        if len(np.unique(clusters)) == 1:
+            return clusters
 
         clusters = clusters - clusters.min()
         clusts_to_use = np.unique(clusters)
@@ -481,8 +552,12 @@ class SAUCIE(object):
             for i2, clust2 in enumerate(clusts_to_use[i1 + 1:]):
                 ei = embedding[clusters == clust1]
                 ej = embedding[clusters == clust2]
-                ri = list(range(ei.shape[0])); np.random.shuffle(ri); ri = ri[:1000];
-                rj = list(range(ej.shape[0])); np.random.shuffle(rj); rj = rj[:1000];
+                ri = list(range(ei.shape[0]))
+                np.random.shuffle(ri)
+                ri = ri[:1000]
+                rj = list(range(ej.shape[0]))
+                np.random.shuffle(rj)
+                rj = rj[:1000]
                 ei = ei[ri, :]
                 ej = ej[rj, :]
 
@@ -508,19 +583,17 @@ class SAUCIE(object):
                 if argmin1 == (i1 + i2) and argmin2 == i1 and i2 > i1:
                     clust_to[i2] = i1
 
-
         for c in clust_to:
             mask = clusters == c
             clusters[mask.tolist()] = clust_to[c]
 
-        clusts_to_use_map = [c for c in clusts_to_use.tolist() if c not in clust_to]
-        clusts_to_use_map = {c:i for i,c in enumerate(clusts_to_use_map)}
+        clusts_to_use_map = [c for c in clusts_to_use.tolist()
+                             if c not in clust_to]
+        clusts_to_use_map = {c: i for i, c in enumerate(clusts_to_use_map)}
 
         for c in clusts_to_use_map:
-            mask = clusters==c
+            mask = clusters == c
             clusters[mask.tolist()] = clusts_to_use_map[c]
-
-
         return clusters
 
     def get_clusters(self, load, binmin=100, max_clusters=1000, verbose=True):
@@ -528,8 +601,10 @@ class SAUCIE(object):
         Get cluster assignments from the ID regularization layer.
 
         :param load: the loader object to iterate over
-        :param binmin: points in a cluster of less than this many points will be assigned the unclustered "-1" label
-        :param max_clusters: going through the clusters can take a long time, so optionally abort any attempt to go
+        :param binmin: points in a cluster of less than this many points
+                       will be assigned the unclustered "-1" label
+        :param max_clusters: going through the clusters can take a long time,
+                             so optionally abort any attempt to go
                              through more than a certain number of clusters
         :param verbose: whether or not to print the results of the clustering
         """
@@ -545,26 +620,30 @@ class SAUCIE(object):
 
         num_clusters = unique_rows.shape[0]
         if num_clusters > max_clusters:
-            print("Too many clusters ({}) to go through...".format(num_clusters))
+            print("""Too many clusters ({})
+             to go through...""".format(num_clusters))
             return num_clusters, np.zeros(acts.shape[0])
 
         num_clusters = 0
         rows_clustered = 0
         clusters = -1 * np.ones(acts.shape[0])
         for i, row in enumerate(unique_rows):
-            rows_equal_to_this_code = np.where(np.all(binarized == row, axis=1))[0]
+            rows_equal_to_this_code = np.where(np.all(binarized == row,
+                                               axis=1))[0]
 
             clusters[rows_equal_to_this_code] = num_clusters
             num_clusters += 1
             rows_clustered += rows_equal_to_this_code.shape[0]
 
         embedding = self.get_embedding(load)
-        #clusters = self.get_cluster_merging(embedding, clusters)
+        clusters = self.get_cluster_merging(embedding, clusters)
         num_clusters = len(np.unique(clusters))
 
         if verbose:
-            print("---- Num clusters: {} ---- Percent clustered: {:.3f} ----".format(num_clusters, 1. * rows_clustered / clusters.shape[0]))
-
+            print("""---- Num clusters: {} ----
+             Percent clustered: {:.3f}
+             ----""".format(num_clusters,
+                            1. * rows_clustered / clusters.shape[0]))
 
         return num_clusters, clusters
 
@@ -577,37 +656,3 @@ class SAUCIE(object):
         """Return the reconstruction layer."""
         reconstruction = self.get_layer(load, 'output')
         return reconstruction
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

@@ -1,13 +1,15 @@
-import SAUCIE
-import numpy as np
 import matplotlib.pyplot as plt
+import numpy as np
+
+import SAUCIE
 
 if __name__ == "__main__":
-    x = np.concatenate([np.random.uniform(-3, -2, (1000, 40)), np.random.uniform(2, 3, (1000, 40))], axis=0)
+    x = np.concatenate([np.random.uniform(-3, -2, (1000, 40)),
+                        np.random.uniform(2, 3, (1000, 40))],
+                       axis=0)
     load = SAUCIE.Loader(x, shuffle=False)
 
     saucie = SAUCIE.SAUCIE(x.shape[1], lambda_c=.2, lambda_d=.4)
-
 
     saucie.train(load, 100)
     embedding = saucie.get_embedding(load)

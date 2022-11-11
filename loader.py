@@ -1,7 +1,10 @@
-from .utils import *
+import numpy as np
+
 
 class Loader(object):
-    """A loader class designed to help provide batches one at a time in random order during training, or in the same order all at once when evaluating results."""
+    """A loader class designed to help provide batches
+    one at a time in random order during training,
+    or in the same order all at once when evaluating results."""
 
     def __init__(self, data, labels=None, shuffle=False):
         """
@@ -29,14 +32,17 @@ class Loader(object):
         num_rows = self.data[0].shape[0]
 
         if self.start + batch_size < num_rows:
-            batch = [x[self.start:self.start + batch_size] for x in self.data]
+            batch = [x[self.start:self.start + batch_size]
+                     for x in self.data]
             self.start += batch_size
-        # if we're at the end of data, wrap around and get some from the beginning
+        # if we're at the end of data, wrap around and get some from beginning
         else:
             self.epoch += 1
             batch_part1 = [x[self.start:] for x in self.data]
-            batch_part2 = [x[:batch_size - (x.shape[0] - self.start)] for x in self.data]
-            batch = [np.concatenate([x1, x2], axis=0) for x1, x2 in zip(batch_part1, batch_part2)]
+            batch_part2 = [x[:batch_size - (x.shape[0] - self.start)]
+                           for x in self.data]
+            batch = [np.concatenate([x1, x2], axis=0)
+                     for x1, x2 in zip(batch_part1, batch_part2)]
 
             self.start = batch_size - (num_rows - self.start)
 
@@ -46,7 +52,7 @@ class Loader(object):
         """
         Iterate through all the batches in the data.
 
-        :param batch_size: the size of batch to yield each time as it's iterating
+        :param batch_size: the batch size to yield each time as it's iterating
         """
         num_rows = self.data[0].shape[0]
         end = 0
@@ -62,7 +68,8 @@ class Loader(object):
 
     def restore_order(self, data):
         """
-        Since the data is randomly shuffled at initialization, this helper can return it to its original order if necessary.
+        Since the data is randomly shuffled at initialization,
+        this helper can return it to its original order if necessary.
 
         :param data: array_like of size (N,D)
         """
@@ -70,4 +77,3 @@ class Loader(object):
         for i, j in enumerate(self.r):
             data_out[j] = data[i]
         return data_out
-
