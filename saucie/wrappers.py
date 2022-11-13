@@ -30,7 +30,8 @@ class SAUCIE_batches(BaseEstimator, TransformerMixin):
         saucie_bn = SAUCIE_BN(input_dim=ncol,
                               lambda_b=self.lambda_b,
                               seed=self.random_state)
-        self.ae_, _ = saucie_bn.get_architecture(self.lr)
+        # list and then unpack if too long line
+        self.ae_, _, _ = saucie_bn.get_architecture(self.lr)
         return self
 
     def transform(self, X, y=None):
@@ -83,7 +84,9 @@ class SAUCIE_labels(BaseEstimator, ClusterMixin, TransformerMixin):
                               lambda_d=self.lambda_d,
                               seed=self.random_state
                               )
-        self.ae_, self.encoder_ = saucie_bn.get_architecture(self.lr)
+        # list and then unpack if too long line
+        models = saucie_bn.get_architecture(self.lr)
+        self.ae_, self.encoder_, self.classifier_ = models
         self.history = self.ae_.fit(X,
                                     epochs=self.epochs,
                                     batch_size=self.batch_size,
@@ -98,5 +101,5 @@ class SAUCIE_labels(BaseEstimator, ClusterMixin, TransformerMixin):
 
     def predict(self, X, y=None):
         # TODO: change this to output from layer_c or sth like that
-        labels = self.ae_.predict(X)
+        labels = self.classifier_.predict(X)
         return labels
