@@ -10,7 +10,7 @@ from tensorflow.keras.initializers import GlorotUniform
 from tensorflow.random import set_seed
 from tensorflow import reduce_mean
 
-# from utils import calculate_mmd, obn, tbn
+# from utils import calculate_mmd
 
 
 class SAUCIE_BN(object):

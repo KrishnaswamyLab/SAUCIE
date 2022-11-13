@@ -1,6 +1,7 @@
 import numpy as np
 from saucie_bn import SAUCIE_BN
 from sklearn.base import BaseEstimator, ClusterMixin, TransformerMixin
+from copy import deepcopy
 
 
 class SAUCIE_batches(BaseEstimator, TransformerMixin):
@@ -45,16 +46,16 @@ class SAUCIE_batches(BaseEstimator, TransformerMixin):
                               axis=0)
             cur_y = np.append(self.y_, y[np.where(y == batch_name)],
                               axis=0)
-
-            self.history += self.ae_.fit(x=[cur_x, cur_y],
-                                         y=None,
-                                         epochs=self.epochs,
-                                         batch_size=self.batch_size,
-                                         shuffle=self.shuffle,
-                                         verbose=self.verbose
-                                         )
-            X_trans = self.ae_.predict([X[np.where(y == batch_name)],
-                                        y[np.where(y == batch_name)]])
+            ae_ = deepcopy(self.ae_)
+            self.history += ae_.fit(x=[cur_x, cur_y],
+                                    y=None,
+                                    epochs=self.epochs,
+                                    batch_size=self.batch_size,
+                                    shuffle=self.shuffle,
+                                    verbose=self.verbose
+                                    )
+            X_trans = ae_.predict([X[np.where(y == batch_name)],
+                                   y[np.where(y == batch_name)]])
             X[np.where(y == batch_name)] = X_trans
 
         return X
