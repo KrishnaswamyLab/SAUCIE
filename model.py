@@ -635,8 +635,8 @@ class SAUCIE(object):
             num_clusters += 1
             rows_clustered += rows_equal_to_this_code.shape[0]
 
-        embedding = self.get_embedding(load)
-        clusters = self.get_cluster_merging(embedding, clusters)
+        # embedding = self.get_embedding(load)
+        # clusters = self.get_cluster_merging(embedding, clusters)
         num_clusters = len(np.unique(clusters))
 
         if verbose:

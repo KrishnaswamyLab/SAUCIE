@@ -8,6 +8,7 @@ from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.layers import Input, Dense, LeakyReLU
 from tensorflow.keras.initializers import GlorotUniform
 from tensorflow.random import set_seed
+from tensorflow import reduce_mean
 
 # from utils import calculate_mmd, obn, tbn
 
@@ -34,6 +35,7 @@ class SAUCIE_BN(object):
         # ENCODER
         input_shape = (self.input_dim, )
         inputs = Input(shape=input_shape, name='encoder_input')
+        batches = Input(shape=(1, ), name="batches_input")
 
         h1 = Dense(self.layers[0],
                    kernel_initializer=GlorotUniform(seed=self.seed),
@@ -62,7 +64,7 @@ class SAUCIE_BN(object):
         encoder = Model(inputs, embedded, name='encoder')
 
         # DECODER
-        latent_inputs = Input(shape=(self.layers[3]),
+        latent_inputs = Input(shape=(self.layers[3], ),
                               name='latentspace')
         h5 = Dense(self.layers[2],
                    kernel_initializer=GlorotUniform(seed=self.seed),
@@ -95,20 +97,81 @@ class SAUCIE_BN(object):
 
         # combine models
         outputs = decoder(encoder(inputs))
-        SAUCIE_BN_model = Model(inputs, outputs, name="SAUCIE_BN")
+        SAUCIE_BN_model = Model([inputs, batches], outputs, name="SAUCIE_BN")
+
+        # add losses
+        if self.lambda_b:
+            recon_loss = self._build_reconstruction_loss_mmd(inputs,
+                                                             outputs,
+                                                             batches)
+            SAUCIE_BN_model.add_loss(recon_loss)
+            mmd_loss = self._build_reg_b(embedded, batches)
+            SAUCIE_BN_model.add_loss(mmd_loss)
+        else:
+            recon_loss = self._build_reconstruction_loss(inputs, outputs)
+            SAUCIE_BN_model.add_loss(recon_loss)
+
+        if self.lambda_c:
+            id_reg_loss = self._build_reg_c(layer_c)
+            SAUCIE_BN_model.add_loss(id_reg_loss)
+        if self.lambda_d:
+            intracluster_loss = self._build_reg_d(inputs, layer_c)
+            SAUCIE_BN_model.add_loss(intracluster_loss)
 
         return SAUCIE_BN_model, encoder, classifier
 
-    def _get_losses(self, model):
-        # add loss just adds them together in fit function,
-        # so that will be automated
-        # model.add_loss(model_Loss)
-        return model
+    def _build_reconstruction_loss(self, input, reconstructed):
+        """
+        Build the reconstruction loss part of the network
+        if batch correction isn't being performed.
+
+        :param reconstructed: the tensor that was output by the decoder
+        :param input: the tensor that was the input of the encoder
+        """
+        loss_recon = reduce_mean((reconstructed - input)**2)
+        return loss_recon
+
+    def _build_reconstruction_loss_mmd(self, input, reconstructed, batches):
+        """
+        Build the reconstruction loss part of the network
+        if batch correction is being performed.
+
+        :param reconstructed: the tensor that was output by the decoder
+        :param input: the tensor that was the input of the encoder
+        """
+        return 0
+
+    def _build_reg_b(self, embedded, batches):
+        """
+        Build the loss for the MMD regularization.
+
+        :param embedded: the latent space embedding of the autoencoder
+        """
+        return 0
+
+    def _build_reg_c(self, codes):
+        """
+        Build loss for the ID regularization.
+
+        :param codes: the codes that will be binarized
+                      and used to determine cluster assignment
+        """
+        return 0
+
+    def _build_reg_d(self, input, codes):
+        """
+        Calculate the intracluster distances in the original data
+        given binary-like codes.
+
+        :param input: the tensor that was the input of the encoder
+        :param codes: the codes that will be binarized
+        and used to determine cluster assignment
+        """
+        return 0
 
     def get_architecture(self, lr):
         set_seed(self.seed)
         SAUCIE_BN_model, encoder, classifier = self._build_layers()
-        SAUCIE_BN_model = self._get_losses(SAUCIE_BN_model)
         # optimizer will take care of all loses itself
         SAUCIE_BN_model.compile(optimizer=Adam(learning_rate=lr))
 

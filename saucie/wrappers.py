@@ -46,13 +46,15 @@ class SAUCIE_batches(BaseEstimator, TransformerMixin):
             cur_y = np.append(self.y_, y[np.where(y == batch_name)],
                               axis=0)
 
-            self.history += self.ae_.fit(cur_x, cur_y,
+            self.history += self.ae_.fit(x=[cur_x, cur_y],
+                                         y=None,
                                          epochs=self.epochs,
                                          batch_size=self.batch_size,
                                          shuffle=self.shuffle,
                                          verbose=self.verbose
                                          )
-            X_trans = self.ae_.predict(X[np.where(y == batch_name)])
+            X_trans = self.ae_.predict([X[np.where(y == batch_name)],
+                                        y[np.where(y == batch_name)]])
             X[np.where(y == batch_name)] = X_trans
 
         return X
@@ -79,15 +81,17 @@ class SAUCIE_labels(BaseEstimator, ClusterMixin, TransformerMixin):
 
     def fit(self, X, y=None):
         ncol = X.shape[1]
+        if y is None:
+            y = np.zeros(X.shape[0])
         saucie_bn = SAUCIE_BN(input_dim=ncol,
                               lambda_c=self.lambda_c,
                               lambda_d=self.lambda_d,
                               seed=self.random_state
                               )
-        # list and then unpack if too long line
         models = saucie_bn.get_architecture(self.lr)
         self.ae_, self.encoder_, self.classifier_ = models
-        self.history = self.ae_.fit(X,
+        self.history = self.ae_.fit(x=[X, y],
+                                    y=None,
                                     epochs=self.epochs,
                                     batch_size=self.batch_size,
                                     shuffle=self.shuffle,
@@ -100,6 +104,6 @@ class SAUCIE_labels(BaseEstimator, ClusterMixin, TransformerMixin):
         return encoded
 
     def predict(self, X, y=None):
-        # TODO: change this to output from layer_c or sth like that
+        # TODO: change this according to decoding original code
         labels = self.classifier_.predict(X)
         return labels
