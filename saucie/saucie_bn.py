@@ -8,8 +8,8 @@ from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.layers import Input, Dense, LeakyReLU
 from tensorflow.keras.initializers import GlorotUniform
 from tensorflow.random import set_seed
-from tensorflow import reduce_mean, boolean_mask, equal, sqrt
 from tf.nn import moments
+import tensorflow as tf
 
 # from utils import calculate_mmd
 
@@ -33,6 +33,7 @@ class SAUCIE_BN(object):
         self.seed = seed
 
     def _build_layers(self):
+        """ Add SAUCIE layers and consecutive losses. """
         # ENCODER
         input_shape = (self.input_dim, )
         inputs = Input(shape=input_shape, name='encoder_input')
@@ -123,38 +124,42 @@ class SAUCIE_BN(object):
 
     def _build_reconstruction_loss(self, input, reconstructed):
         """
-        Build the reconstruction loss part of the network
-        if batch correction isn't being performed.
+        Build the  classical autoencoder reconstruction loss.
 
         :param reconstructed: the tensor that was output by the decoder
         :param input: the tensor that was the input of the encoder
         """
-        loss_recon = reduce_mean((reconstructed - input)**2)
+        loss_recon = tf.reduce_mean((reconstructed - input)**2)
         return loss_recon
 
     def _normalize_dist(samples):
+        """
+        Normalize the given samples.
+
+        :param samples: the tensor of samples to be normalized
+        """
         u, var = moments(samples, 0)
-        dist = (samples - u)/(sqrt(var+1e-6)+1e-6)
+        dist = (samples - u)/(tf.sqrt(var+1e-6)+1e-6)
         return dist
 
     def _build_reconstruction_loss_mmd(self, input, reconstructed, batches):
         """
-        Build the reconstruction loss part of the network
-        if batch correction is being performed.
+        Build the reconstruction loss if batch correction is being performed.
 
         :param reconstructed: the tensor that was output by the decoder
         :param input: the tensor that was the input of the encoder
+        :param batches: the tensor of batch labels of the data
         """
         # reference batch and normal autoencoder loss
-        ref_el = equal(batches, 0)
-        ref_recon = boolean_mask(reconstructed, ref_el)
-        ref_input = boolean_mask(input, ref_el)
+        ref_el = tf.equal(batches, 0)
+        ref_recon = tf.boolean_mask(reconstructed, ref_el)
+        ref_input = tf.boolean_mask(input, ref_el)
         ref_loss = self._build_reconstruction_loss(ref_input, ref_recon)
 
         # non-reference batch
-        nonrefel = equal(batches, 1)
-        nonrefrecon = boolean_mask(reconstructed, nonrefel)
-        nonrefin = boolean_mask(input, nonrefel)
+        nonrefel = tf.equal(batches, 1)
+        nonrefrecon = tf.boolean_mask(reconstructed, nonrefel)
+        nonrefin = tf.boolean_mask(input, nonrefel)
         nonrefrecon_dist = self._normalize_dist(nonrefrecon)
         nonrefin_dist = self._normalize_dist(nonrefin)
         nonref_loss = self._build_reconstruction_loss(nonrefrecon_dist,
@@ -177,7 +182,14 @@ class SAUCIE_BN(object):
         :param codes: the codes that will be binarized
                       and used to determine cluster assignment
         """
-        return 0
+        # sum down neurons
+        neuron_sums = tf.reduce_sum(codes, axis=0, keep_dims=True)
+        # normalize neuron sums
+        normalized_sums = neuron_sums/tf.reduce_sum(neuron_sums)
+
+        log_norm = tf.log(normalized_sums + 1e-9)
+        loss_c = self.lambda_c*tf.reduce_sum(-normalized_sums*log_norm)
+        return loss_c
 
     def _build_reg_d(self, input, codes):
         """
@@ -188,9 +200,49 @@ class SAUCIE_BN(object):
         :param codes: the codes that will be binarized
         and used to determine cluster assignment
         """
-        return 0
+        out = self._pairwise_dists(codes, codes)
+        same_cluster = self._gaussian_kernel_matrix(out)
+        same_cluster = same_cluster - tf.reduce_min(same_cluster)
+        same_cluster = same_cluster / tf.reduce_max(same_cluster)
+
+        dists = self._pairwise_dists(input, input)
+        dists = tf.sqrt(dists + 1e-3)
+
+        intracluster_distances = dists * same_cluster
+        intracluster_distances = tf.reduce_mean(intracluster_distances)
+        intra_loss = self.lambda_d * intracluster_distances
+        return intra_loss
+
+    def _pairwise_dists(self, x1, x2):
+        """Helper function to calculate pairwise distances
+        between tensors x1 and x2."""
+        r1 = tf.reduce_sum(x1 * x1, 1, keep_dims=True)
+        r2 = tf.reduce_sum(x2 * x2, 1, keep_dims=True)
+
+        D = r1 - 2 * tf.matmul(x1, tf.transpose(x2)) + tf.transpose(r2)
+
+        return D
+
+    def _gaussian_kernel_matrix(self, dist):
+        """Multi-scale RBF kernel."""
+        sigmas = [1e-6, 1e-5, 1e-4, 1e-3, 1e-2, 1e-1, 1,
+                  5, 10, 15, 20, 25, 30, 35, 100, 1e3,
+                  1e4, 1e5, 1e6]
+
+        beta = 1. / (2. * (tf.expand_dims(sigmas, 1)))
+
+        s = tf.matmul(beta, tf.reshape(dist, (1, -1)))
+
+        return tf.reshape(tf.reduce_sum(tf.exp(-s), 0),
+                          tf.shape(dist)) / len(sigmas)
 
     def get_architecture(self, lr):
+        """
+        Get the SAUCIE architecture
+        and compile the model with a given learning rate.
+
+        :param lr: learning rate to compile the model with
+        """
         set_seed(self.seed)
         SAUCIE_BN_model, encoder, classifier = self._build_layers()
         # optimizer will take care of all loses itself
