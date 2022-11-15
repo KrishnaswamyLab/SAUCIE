@@ -36,6 +36,7 @@ class SAUCIE_batches(BaseEstimator, TransformerMixin):
         return self
 
     def transform(self, X, y=None):
+        ref_batch = np.zeros(self.y_.shape[0])
         if y is None:
             y = np.repeat(self.y_[0]+1, X.shape[0])
         for batch_name in np.unique(y):
@@ -44,7 +45,8 @@ class SAUCIE_batches(BaseEstimator, TransformerMixin):
                 continue
             cur_x = np.append(self._fit_X, X[np.where(y == batch_name)],
                               axis=0)
-            cur_y = np.append(self.y_, y[np.where(y == batch_name)],
+            nonref_batch = np.ones(y[np.where(y == batch_name)].shape[0])
+            cur_y = np.append(ref_batch, nonref_batch,
                               axis=0)
             ae_ = deepcopy(self.ae_)
             self.history += ae_.fit(x=[cur_x, cur_y],

@@ -8,7 +8,8 @@ from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.layers import Input, Dense, LeakyReLU
 from tensorflow.keras.initializers import GlorotUniform
 from tensorflow.random import set_seed
-from tensorflow import reduce_mean
+from tensorflow import reduce_mean, boolean_mask, equal, sqrt
+from tf.nn import moments
 
 # from utils import calculate_mmd
 
@@ -131,6 +132,11 @@ class SAUCIE_BN(object):
         loss_recon = reduce_mean((reconstructed - input)**2)
         return loss_recon
 
+    def _normalize_dist(samples):
+        u, var = moments(samples, 0)
+        dist = (samples - u)/(sqrt(var+1e-6)+1e-6)
+        return dist
+
     def _build_reconstruction_loss_mmd(self, input, reconstructed, batches):
         """
         Build the reconstruction loss part of the network
@@ -139,7 +145,22 @@ class SAUCIE_BN(object):
         :param reconstructed: the tensor that was output by the decoder
         :param input: the tensor that was the input of the encoder
         """
-        return 0
+        # reference batch and normal autoencoder loss
+        ref_el = equal(batches, 0)
+        ref_recon = boolean_mask(reconstructed, ref_el)
+        ref_input = boolean_mask(input, ref_el)
+        ref_loss = self._build_reconstruction_loss(ref_input, ref_recon)
+
+        # non-reference batch
+        nonrefel = equal(batches, 1)
+        nonrefrecon = boolean_mask(reconstructed, nonrefel)
+        nonrefin = boolean_mask(input, nonrefel)
+        nonrefrecon_dist = self._normalize_dist(nonrefrecon)
+        nonrefin_dist = self._normalize_dist(nonrefin)
+        nonref_loss = self._build_reconstruction_loss(nonrefrecon_dist,
+                                                      nonrefin_dist)
+
+        return ref_loss + 0.1*nonref_loss
 
     def _build_reg_b(self, embedded, batches):
         """
