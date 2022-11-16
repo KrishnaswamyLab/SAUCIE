@@ -12,6 +12,7 @@ class SAUCIE_batches(BaseEstimator, TransformerMixin):
                  batch_size=128,
                  shuffle="batch",
                  verbose="auto",
+                 normalize=False,
                  random_state=None):
         self.lambda_b = lambda_b
         self.lr = lr
@@ -19,6 +20,7 @@ class SAUCIE_batches(BaseEstimator, TransformerMixin):
         self.batch_size = batch_size
         self.shuffle = shuffle
         self.verbose = verbose
+        self.normalize = normalize
         self.random_state = random_state
         self.history = []
 
@@ -27,6 +29,8 @@ class SAUCIE_batches(BaseEstimator, TransformerMixin):
             y = np.zeros(X.shape[0])
         self.y_ = y[np.where(y == np.unique(y)[0])]
         self._fit_X = X[np.where(y == np.unique(y)[0])]
+        if self.normalize:
+            self._fit_X = np.arcsinh(self._fit_X)
         ncol = X.shape[1]
         saucie_bn = SAUCIE_BN(input_dim=ncol,
                               lambda_b=self.lambda_b,
@@ -37,6 +41,8 @@ class SAUCIE_batches(BaseEstimator, TransformerMixin):
 
     def transform(self, X, y=None):
         ref_batch = np.zeros(self.y_.shape[0])
+        if self.normalize:
+            X = np.arcsinh(X)
         if y is None:
             y = np.repeat(self.y_[0]+1, X.shape[0])
         for batch_name in np.unique(y):
@@ -72,6 +78,7 @@ class SAUCIE_labels(BaseEstimator, ClusterMixin, TransformerMixin):
                  batch_size=128,
                  shuffle="batch",
                  verbose="auto",
+                 normalize=False,
                  random_state=None):
         self.lambda_c = lambda_c
         self.lambda_d = lambda_d
@@ -80,10 +87,13 @@ class SAUCIE_labels(BaseEstimator, ClusterMixin, TransformerMixin):
         self.batch_size = batch_size
         self.shuffle = shuffle
         self.verbose = verbose
+        self.normalize = normalize
         self.random_state = random_state
 
     def fit(self, X, y=None):
         ncol = X.shape[1]
+        if self.normalize:
+            X = np.arcsinh(X)
         if y is None:
             y = np.zeros(X.shape[0])
         saucie_bn = SAUCIE_BN(input_dim=ncol,
@@ -103,10 +113,14 @@ class SAUCIE_labels(BaseEstimator, ClusterMixin, TransformerMixin):
         return self
 
     def transform(self, X, y=None):
+        if self.normalize:
+            X = np.arcsinh(X)
         encoded = self.encoder_.predict(X)
         return encoded
 
     def predict(self, X, y=None):
+        if self.normalize:
+            X = np.arcsinh(X)
         # TODO: change this according to decoding original code
         labels = self.classifier_.predict(X)
         return labels
