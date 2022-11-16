@@ -1,15 +1,10 @@
-# import os
-
-# import numpy as np
-# import sklearn.metrics
-# import tensorflow as tf
+import tensorflow as tf
+from tensorflow.keras.initializers import GlorotUniform
+from tensorflow.keras.layers import Dense, Input, LeakyReLU
 from tensorflow.keras.models import Model
 from tensorflow.keras.optimizers import Adam
-from tensorflow.keras.layers import Input, Dense, LeakyReLU
-from tensorflow.keras.initializers import GlorotUniform
 from tensorflow.random import set_seed
 from tf.nn import moments
-import tensorflow as tf
 
 # from utils import calculate_mmd
 
@@ -167,13 +162,43 @@ class SAUCIE_BN(object):
 
         return ref_loss + 0.1*nonref_loss
 
+    def _calculate_batch_var(self, dists, batches, batch):
+        batch_rows = tf.boolean_mask(dists, tf.equal(batches, batch))
+        K_b = tf.boolean_mask(tf.transpose(batch_rows),
+                              tf.equal(batches, batch))
+
+        nrows_batch = tf.reduce_sum(tf.boolean_mask(tf.ones_like(batches),
+                                    tf.equal(batches, batches)))
+        nrows_batch = tf.cast(nrows_batch, tf.float32)
+
+        K_b = tf.reduce_sum(K_b) / (nrows_batch**2)
+
+        return K_b, nrows_batch
+
     def _build_reg_b(self, embedded, batches):
         """
         Build the loss for the MMD regularization.
 
         :param embedded: the latent space embedding of the autoencoder
         """
-        return 0
+        embedded = embedded/tf.reduce_mean(embedded)
+        K = self._pairwise_dists(embedded, embedded)
+        K = K/tf.reduce_max()
+        K = self._gaussian_kernel_matrix(K)
+
+        # reference batch
+        var_in_ref, bsize_ref = self._calculate_batch_var(K, batches, 0)
+        # nonreference batch
+        var_in_nonref, bsize_nonref = self._calculate_batch_var(K, batches, 1)
+        # between batches
+        K_12 = tf.boolean_mask(K, tf.equal(batches, 0))
+        K_12 = tf.boolean_mask(tf.transpose(K_12), tf.equal(batches, 1))
+        K_12_ = tf.reduce_sum(tf.transpose(K_12))
+        k_12_coeff = K_12_ / (bsize_ref * bsize_nonref)
+
+        loss_b = var_in_ref + var_in_nonref - 2 * k_12_coeff
+        loss_b = self.lambda_b * tf.abs(loss_b)
+        return loss_b
 
     def _build_reg_c(self, codes):
         """
