@@ -1,5 +1,5 @@
 import numpy as np
-from saucie_bn import SAUCIE_BN
+from saucie.saucie_bn import SAUCIE_BN
 from sklearn.base import BaseEstimator, ClusterMixin, TransformerMixin
 from copy import deepcopy
 

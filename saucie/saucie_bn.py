@@ -4,7 +4,7 @@ from tensorflow.keras.layers import Dense, Input, LeakyReLU
 from tensorflow.keras.models import Model
 from tensorflow.keras.optimizers import Adam
 from tensorflow.random import set_seed
-from tf.nn import moments
+from tensorflow.nn import moments
 
 # from utils import calculate_mmd
 
