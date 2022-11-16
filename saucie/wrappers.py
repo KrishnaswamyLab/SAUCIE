@@ -110,6 +110,9 @@ class SAUCIE_labels(BaseEstimator, ClusterMixin, TransformerMixin):
                                     shuffle=self.shuffle,
                                     verbose=self.verbose
                                     )
+
+        labels = self.classifier_.predict(X)
+        self.labels_ = self._decode_labels(labels)
         return self
 
     def transform(self, X, y=None):
@@ -118,9 +121,21 @@ class SAUCIE_labels(BaseEstimator, ClusterMixin, TransformerMixin):
         encoded = self.encoder_.predict(X)
         return encoded
 
+    def _decode_labels(self, labels):
+        labels = labels/labels.max()
+        binarized = np.where(labels > 1e-6, 1, 0)
+        unique_codes = np.unique(binarized, axis=0)
+        clusters = np.zeros(labels.shape[0])
+        for i, code in enumerate(unique_codes):
+            clusters[np.where(binarized == code)] = i
+        return clusters
+
     def predict(self, X, y=None):
         if self.normalize:
             X = np.arcsinh(X)
-        # TODO: change this according to decoding original code
         labels = self.classifier_.predict(X)
+        labels = self._decode_labels(labels)
         return labels
+
+    def fit_predict(self, X, y=None):
+        return self.fit(X).labels_
