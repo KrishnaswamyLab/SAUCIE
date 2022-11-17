@@ -6,7 +6,7 @@ from streamlit_elements.elements import display_buttons
 from streamlit_elements.scores import display_scores
 from streamlit_elements.elements import dump_model, convert_df
 from streamlit_elements.figures import prepare_figure
-from saucie.wrappers import SAUCIE_batches, SAUCIE_labels
+from saucie.saucie import SAUCIE_batches, SAUCIE_labels
 
 
 if __name__ == "__main__":

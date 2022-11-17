@@ -5,7 +5,7 @@ import numpy as np
 from sklearn.base import clone
 from sklearn.datasets import make_blobs
 
-from saucie.wrappers import SAUCIE_batches, SAUCIE_labels
+from saucie.saucie import SAUCIE_batches, SAUCIE_labels
 
 
 def data_saucie():
