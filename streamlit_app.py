@@ -1,6 +1,5 @@
 import numpy as np
 import pandas as pd
-import plotly_express as px
 import streamlit as st
 
 from streamlit_elements.elements import display_buttons
@@ -28,29 +27,23 @@ if __name__ == "__main__":
     if uploaded:
 
         data = pd.read_csv(uploaded, index_col=0)
-        df = px.data.iris()
-        species = np.unique(np.array(df['species']))
-        sp = np.array([species[i-1] for i in df['species_id'].tolist()])
-        random_species = np.arange(0, 4)
-        random_sp = np.random.randint(0, 4, size=sp.shape[0])
-        y = df["sepal_length"].to_numpy()
-        x = df["sepal_width"].to_numpy()
+
         st.markdown("### Select original labels and batches")
         with st.form(key="my_form"):
             label_select = st.selectbox(
                 "Label",
-                options=["No labels"]+data.index.tolist(),
+                options=["No labels"]+data.columns.tolist(),
                 help="""
-                Select which row refers to your labels.
+                Select which column refers to your labels.
                 If none, select "No labels" and submit.
                 """,
             )
 
             batch_select = st.selectbox(
                     "Batch",
-                    options=["No batches"]+data.index.tolist(),
+                    options=["No batches"]+data.columns.tolist(),
                     help="""
-                    Select which row refers to your batches.
+                    Select which column refers to your batches.
                     If none, select "No batches" and submit.
                     """,
                 )
@@ -61,8 +54,9 @@ if __name__ == "__main__":
             if batch_select == "No batches":
                 model_batches = None
             else:
-                batches = data.loc[batch_select].to_numpy()
-                data.drop(index=batch_select)
+                batches = data[[batch_select]].to_numpy()
+                batches = batches.flatten()
+                data.drop(columns=batch_select, inplace=True)
                 model_batches = SAUCIE_batches(epochs=2, lr=1e-9,
                                                normalize=normalize,
                                                random_state=42)
@@ -70,10 +64,12 @@ if __name__ == "__main__":
             if label_select == "No labels":
                 ground_truth = None
             else:
-                ground_truth = data.loc[label_select].to_numpy()
-                data.drop(index=label_select)
+                ground_truth = data[[label_select]].to_numpy()
+                ground_truth = ground_truth.flatten()
+                data.drop(columns=label_select, inplace=True)
 
-            data = data.to_numpy().T
+            data = data.to_numpy()
+            data = data.astype(float)
 
             if model_batches is not None:
                 model_batches.fit(data, batches)
@@ -88,9 +84,10 @@ if __name__ == "__main__":
                     cleaned_data = data
 
             # fit on the cleaned data -> labels, embed
-            saucie = SAUCIE_labels(epochs=50, lr=1e-4, normalize=False,
+            saucie = SAUCIE_labels(epochs=100, lr=1e-4, normalize=False,
                                    batch_size=256, shuffle=True)
-            saucie.fit(cleaned_data)
+            with st.spinner("Training the model"):
+                saucie.fit(cleaned_data)
             embedded = saucie.transform(cleaned_data)
             labels = saucie.predict(cleaned_data)
             fig = prepare_figure(embedded[:, 0], embedded[:, 1],
