@@ -61,17 +61,17 @@ class SAUCIE_BN(object):
         encoder = Model(inputs, embedded, name='encoder')
 
         # DECODER
-        latent_inputs = Input(shape=(self.layers[3], ),
-                              name='latentspace')
+        # latent_inputs = Input(shape=(self.layers[3], ),
+        #                       name='latentspace')
         h5 = Dense(self.layers[2],
                    kernel_initializer=GlorotUniform(seed=self.seed),
-                   name='decoder0', use_bias=True)(latent_inputs)
+                   name='decoder0', use_bias=True)(embedded)
         h5 = LeakyReLU(alpha=0.2, name='decoder0_activation')(h5)
 
         h6 = Dense(self.layers[1],
                    kernel_initializer=GlorotUniform(seed=self.seed),
                    name='decoder1', use_bias=True)(h5)
-        h6 = LeakyReLU(alpha=0.2, name='decoder0_activation')(h6)
+        h6 = LeakyReLU(alpha=0.2, name='decoder1_activation')(h6)
 
         if self.lambda_c:
             layer_c = Dense(self.layers[0],
@@ -87,13 +87,11 @@ class SAUCIE_BN(object):
         outputs = Dense(self.input_dim,
                         kernel_initializer=GlorotUniform(seed=self.seed),
                         name='outputs', use_bias=True)(layer_c)
-        decoder = Model(latent_inputs, outputs, name='decoder')
 
         # get classifier layer
         classifier = Model(inputs, layer_c, name='classifier')
 
         # combine models
-        outputs = decoder(encoder(inputs))
         SAUCIE_BN_model = Model([inputs, batches], outputs, name="SAUCIE_BN")
 
         # add losses
@@ -104,16 +102,24 @@ class SAUCIE_BN(object):
             SAUCIE_BN_model.add_loss(recon_loss)
             mmd_loss = self._build_reg_b(embedded, batches)
             SAUCIE_BN_model.add_loss(mmd_loss)
+            SAUCIE_BN_model.add_metric(mmd_loss, name='mmd_loss',
+                                       aggregation='mean')
         else:
             recon_loss = self._build_reconstruction_loss(inputs, outputs)
             SAUCIE_BN_model.add_loss(recon_loss)
+            SAUCIE_BN_model.add_metric(recon_loss, name='recon_loss',
+                                       aggregation='mean')
 
         if self.lambda_c:
             id_reg_loss = self._build_reg_c(layer_c)
             SAUCIE_BN_model.add_loss(id_reg_loss)
+            SAUCIE_BN_model.add_metric(id_reg_loss, name='id_reg_loss',
+                                       aggregation='mean')
         if self.lambda_d:
             intracluster_loss = self._build_reg_d(inputs, layer_c)
             SAUCIE_BN_model.add_loss(intracluster_loss)
+            SAUCIE_BN_model.add_metric(intracluster_loss, name='intra_loss',
+                                       aggregation='mean')            
 
         return SAUCIE_BN_model, encoder, classifier
 
@@ -208,12 +214,12 @@ class SAUCIE_BN(object):
                       and used to determine cluster assignment
         """
         # sum down neurons
-        neuron_sums = tf.reduce_sum(codes, axis=0, keep_dims=True)
+        neuron_sums = tf.math.reduce_sum(codes, axis=0, keepdims=True)
         # normalize neuron sums
-        normalized_sums = neuron_sums/tf.reduce_sum(neuron_sums)
+        normalized_sums = neuron_sums/tf.math.reduce_sum(neuron_sums)
 
-        log_norm = tf.log(normalized_sums + 1e-9)
-        loss_c = self.lambda_c*tf.reduce_sum(-normalized_sums*log_norm)
+        log_norm = tf.math.log(normalized_sums + 1e-9)
+        loss_c = self.lambda_c*tf.math.reduce_sum(-normalized_sums*log_norm)
         return loss_c
 
     def _build_reg_d(self, input, codes):
@@ -241,8 +247,8 @@ class SAUCIE_BN(object):
     def _pairwise_dists(self, x1, x2):
         """Helper function to calculate pairwise distances
         between tensors x1 and x2."""
-        r1 = tf.reduce_sum(x1 * x1, 1, keep_dims=True)
-        r2 = tf.reduce_sum(x2 * x2, 1, keep_dims=True)
+        r1 = tf.reduce_sum(x1 * x1, 1, keepdims=True)
+        r2 = tf.reduce_sum(x2 * x2, 1, keepdims=True)
 
         D = r1 - 2 * tf.matmul(x1, tf.transpose(x2)) + tf.transpose(r2)
 
