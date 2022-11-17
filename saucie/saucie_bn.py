@@ -119,7 +119,7 @@ class SAUCIE_BN(object):
             intracluster_loss = self._build_reg_d(inputs, layer_c)
             SAUCIE_BN_model.add_loss(intracluster_loss)
             SAUCIE_BN_model.add_metric(intracluster_loss, name='intra_loss',
-                                       aggregation='mean')            
+                                       aggregation='mean')      
 
         return SAUCIE_BN_model, encoder, classifier
 
