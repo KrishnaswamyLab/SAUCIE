@@ -3,15 +3,11 @@ import pandas as pd
 import plotly_express as px
 import streamlit as st
 
-from streamlit_elements.elements import display_buttons, display_scores
+from streamlit_elements.elements import display_buttons
+from streamlit_elements.scores import display_scores
+from streamlit_elements.elements import dump_model, convert_df
 from streamlit_elements.figures import prepare_figure
 from saucie.wrappers import SAUCIE_batches, SAUCIE_labels
-
-
-@st.cache
-def convert_df(df):
-    # IMPORTANT: Cache the conversion to prevent computation on every rerun
-    return df.to_csv().encode('utf-8')
 
 
 if __name__ == "__main__":
@@ -62,7 +58,6 @@ if __name__ == "__main__":
             submit_button = st.form_submit_button(label="Submit")
 
         if submit_button:
-            csv = convert_df(data)
             if batch_select == "No batches":
                 model_batches = None
             else:
@@ -96,13 +91,20 @@ if __name__ == "__main__":
             saucie = SAUCIE_labels(epochs=50, lr=1e-4, normalize=False,
                                    batch_size=256, shuffle=True)
             saucie.fit(cleaned_data)
-            encoded = saucie.transform(cleaned_data)
+            embedded = saucie.transform(cleaned_data)
             labels = saucie.predict(cleaned_data)
-            fig = prepare_figure(encoded[:, 0], encoded[:, 1],
+            fig = prepare_figure(embedded[:, 0], embedded[:, 1],
                                  labels, ground_truth)
 
             st.plotly_chart(fig, use_container_width=True)
 
-            display_scores(cleaned_data, encoded, labels, ground_truth)
+            display_scores(cleaned_data, embedded, labels, ground_truth)
+            saucie_download = dump_model(saucie)
+            labels_csv = convert_df(pd.DataFrame(labels))
+            embedded_csv = convert_df(pd.DataFrame(embedded))
+            if model_batches is not None:
+                model_batches = dump_model(model_batches)
+                cleaned_data = convert_df(pd.DataFrame(cleaned_data))
             # labels, embedding, model, cleaned data, model for batches
-            display_buttons(csv, csv, csv, cleaned_data, model_batches)
+            display_buttons(labels_csv, embedded_csv, saucie_download,
+                            cleaned_data, model_batches)

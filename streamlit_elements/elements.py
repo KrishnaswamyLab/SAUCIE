@@ -1,5 +1,7 @@
+import io
+import pickle
+
 import streamlit as st
-from sklearn.metrics import adjusted_rand_score, silhouette_score
 
 
 def display_buttons(labels, dim_red,
@@ -13,10 +15,10 @@ def display_buttons(labels, dim_red,
 
     col2.download_button("Download model",
                          model,
-                         file_name="model.csv",
+                         file_name="model.pickle",
                          help="""Download model for clustering
                           and dimensionality reduction""",
-                         mime='text/csv')
+                         mime='application/octet-stream')
 
     col1.download_button("Download embedding",
                          dim_red,
@@ -38,26 +40,14 @@ def display_buttons(labels, dim_red,
 
 
 @st.cache
-def compute_ari_score(y_pred, y_true=None):
-    ari_score = adjusted_rand_score(y_true, y_pred)
-    return ari_score
+def dump_model(model):
+    f = io.BytesIO()
+    pickle.dump(model, f)
+    f.seek(0)
+    return f
 
 
 @st.cache
-def compute_silhouette(x, y):
-    score = silhouette_score(x, y)
-    return score
-
-
-def display_scores(X, X_embed, y_pred, y_true=None):
-    col1, col2 = st.columns(2)
-    silhouette_labels = compute_silhouette(X, y_pred)
-    col1.metric("Silhouette of the clustering",
-                value=round(silhouette_labels, 5))
-    if y_true is not None:
-        ari = compute_ari_score(y_pred, y_true)
-        silhouette_embed = compute_silhouette(X_embed, y_true)
-        col2.metric("Adjusted Rand Index",
-                    value=round(ari, 5))
-        col1.metric("Silhouette of the embedding",
-                    value=round(silhouette_embed, 5))
+def convert_df(df):
+    # IMPORTANT: Cache the conversion to prevent computation on every rerun
+    return df.to_csv().encode('utf-8')
