@@ -31,6 +31,10 @@ class SAUCIE_batches(BaseEstimator, TransformerMixin):
         if y is None:
             y = np.zeros(X.shape[0])
         if self.normalize:
+            self._min_x = np.min(X, axis=0)
+            X = X - self._min_x
+            self._max_x = np.max(X, axis=0)
+            X = X/self._max_x
             X = np.arcsinh(X)
         self.y_ = y[np.where(y == np.unique(y)[0])]
         self._fit_X = X[np.where(y == np.unique(y)[0])]
@@ -48,6 +52,7 @@ class SAUCIE_batches(BaseEstimator, TransformerMixin):
     def transform(self, X, y=None):
         ref_batch = np.zeros(self.y_.shape[0])
         if self.normalize:
+            X = (X - self._min_x)/self._max_x
             X = np.arcsinh(X)
         if y is None:
             y = np.repeat(self.y_[0]+1, X.shape[0])
@@ -102,6 +107,10 @@ class SAUCIE_labels(BaseEstimator, ClusterMixin, TransformerMixin):
         self.layers[3] = 2
         ncol = X.shape[1]
         if self.normalize:
+            self._min_x = np.min(X, axis=0)
+            X = X - self._min_x
+            self._max_x = np.max(X, axis=0)
+            X = X/self._max_x
             X = np.arcsinh(X)
         if y is None:
             y = np.zeros(X.shape[0])
@@ -127,6 +136,7 @@ class SAUCIE_labels(BaseEstimator, ClusterMixin, TransformerMixin):
 
     def transform(self, X, y=None):
         if self.normalize:
+            X = (X - self._min_x)/self._max_x
             X = np.arcsinh(X)
         encoded = self.encoder_.predict(X)
         return encoded
@@ -142,6 +152,7 @@ class SAUCIE_labels(BaseEstimator, ClusterMixin, TransformerMixin):
 
     def predict(self, X, y=None):
         if self.normalize:
+            X = (X - self._min_x)/self._max_x
             X = np.arcsinh(X)
         labels = self.classifier_.predict(X)
         labels = self._decode_labels(labels)
