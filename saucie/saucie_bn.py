@@ -82,7 +82,7 @@ class SAUCIE_BN(object):
             layer_c = Dense(self.layers[0],
                             kernel_initializer=GlorotUniform(seed=self.seed),
                             name='layer_c', use_bias=True)(h6)
-            layer_c = LeakyReLU(alpha=0.2, name='layer_c')(layer_c)
+            layer_c = LeakyReLU(alpha=0.2, name='layer_c_activation')(layer_c)
 
         outputs = Dense(self.input_dim,
                         kernel_initializer=GlorotUniform(seed=self.seed),
@@ -100,6 +100,8 @@ class SAUCIE_BN(object):
                                                              outputs,
                                                              batches)
             SAUCIE_BN_model.add_loss(recon_loss)
+            SAUCIE_BN_model.add_metric(recon_loss, name='recon_loss',
+                                       aggregation='mean')
             mmd_loss = self._build_reg_b(embedded, batches)
             SAUCIE_BN_model.add_loss(mmd_loss)
             SAUCIE_BN_model.add_metric(mmd_loss, name='mmd_loss',
@@ -133,7 +135,7 @@ class SAUCIE_BN(object):
         loss_recon = tf.reduce_mean((reconstructed - input)**2)
         return loss_recon
 
-    def _normalize_dist(samples):
+    def _normalize_dist(self, samples):
         """
         Normalize the given samples.
 
@@ -152,13 +154,16 @@ class SAUCIE_BN(object):
         :param batches: the tensor of batch labels of the data
         """
         # reference batch and normal autoencoder loss
-        ref_el = tf.equal(batches, 0)
+        ref_el = tf.squeeze(tf.equal(batches, 0))
+        ref_el = tf.ensure_shape(ref_el, [None])
         ref_recon = tf.boolean_mask(reconstructed, ref_el)
         ref_input = tf.boolean_mask(input, ref_el)
         ref_loss = self._build_reconstruction_loss(ref_input, ref_recon)
 
         # non-reference batch
-        nonrefel = tf.equal(batches, 1)
+        nonrefel = tf.squeeze(tf.equal(batches, 1))
+        nonrefel = tf.ensure_shape(nonrefel, [None])
+
         nonrefrecon = tf.boolean_mask(reconstructed, nonrefel)
         nonrefin = tf.boolean_mask(input, nonrefel)
         nonrefrecon_dist = self._normalize_dist(nonrefrecon)
@@ -169,12 +174,15 @@ class SAUCIE_BN(object):
         return ref_loss + 0.1*nonref_loss
 
     def _calculate_batch_var(self, dists, batches, batch):
-        batch_rows = tf.boolean_mask(dists, tf.equal(batches, batch))
+        batch_el = tf.squeeze(tf.equal(batches, batch))
+        batch_el = tf.ensure_shape(batch_el, [None])
+
+        batch_rows = tf.boolean_mask(dists, batch_el)
         K_b = tf.boolean_mask(tf.transpose(batch_rows),
                               tf.equal(batches, batch))
 
         nrows_batch = tf.reduce_sum(tf.boolean_mask(tf.ones_like(batches),
-                                    tf.equal(batches, batches)))
+                                    batch_el))
         nrows_batch = tf.cast(nrows_batch, tf.float32)
 
         K_b = tf.reduce_sum(K_b) / (nrows_batch**2)
@@ -189,16 +197,19 @@ class SAUCIE_BN(object):
         """
         embedded = embedded/tf.reduce_mean(embedded)
         K = self._pairwise_dists(embedded, embedded)
-        K = K/tf.reduce_max()
+        K = K/tf.reduce_max(K)
         K = self._gaussian_kernel_matrix(K)
-
         # reference batch
         var_in_ref, bsize_ref = self._calculate_batch_var(K, batches, 0)
         # nonreference batch
         var_in_nonref, bsize_nonref = self._calculate_batch_var(K, batches, 1)
         # between batches
-        K_12 = tf.boolean_mask(K, tf.equal(batches, 0))
-        K_12 = tf.boolean_mask(tf.transpose(K_12), tf.equal(batches, 1))
+        ref_el = tf.squeeze(tf.equal(batches, 0))
+        ref_el = tf.ensure_shape(ref_el, [None])
+        K_12 = tf.boolean_mask(K, ref_el)
+        nonref_el = tf.squeeze(tf.equal(batches, 1))
+        nonref_el = tf.ensure_shape(nonref_el, [None])
+        K_12 = tf.boolean_mask(tf.transpose(K_12), nonref_el)
         K_12_ = tf.reduce_sum(tf.transpose(K_12))
         k_12_coeff = K_12_ / (bsize_ref * bsize_nonref)
 

@@ -1,7 +1,9 @@
-import numpy as np
-from saucie.saucie_bn import SAUCIE_BN
-from sklearn.base import BaseEstimator, ClusterMixin, TransformerMixin
 from copy import deepcopy
+
+import numpy as np
+from sklearn.base import BaseEstimator, ClusterMixin, TransformerMixin
+
+from saucie.saucie_bn import SAUCIE_BN
 
 
 class SAUCIE_batches(BaseEstimator, TransformerMixin):
@@ -10,7 +12,6 @@ class SAUCIE_batches(BaseEstimator, TransformerMixin):
                  lr=1e-3,
                  epochs=100,
                  batch_size=128,
-                 shuffle="batch",
                  verbose="auto",
                  normalize=False,
                  random_state=None):
@@ -18,7 +19,6 @@ class SAUCIE_batches(BaseEstimator, TransformerMixin):
         self.lr = lr
         self.epochs = epochs
         self.batch_size = batch_size
-        self.shuffle = shuffle
         self.verbose = verbose
         self.normalize = normalize
         self.random_state = random_state
@@ -27,6 +27,8 @@ class SAUCIE_batches(BaseEstimator, TransformerMixin):
     def fit(self, X, y=None):
         if y is None:
             y = np.zeros(X.shape[0])
+        if self.normalize:
+            X = np.arcsinh(X)
         self.y_ = y[np.where(y == np.unique(y)[0])]
         self._fit_X = X[np.where(y == np.unique(y)[0])]
         if self.normalize:
@@ -55,13 +57,13 @@ class SAUCIE_batches(BaseEstimator, TransformerMixin):
             cur_y = np.append(ref_batch, nonref_batch,
                               axis=0)
             ae_ = deepcopy(self.ae_)
-            self.history += ae_.fit(x=[cur_x, cur_y],
-                                    y=None,
-                                    epochs=self.epochs,
-                                    batch_size=self.batch_size,
-                                    shuffle=self.shuffle,
-                                    verbose=self.verbose
-                                    )
+            self.history += [ae_.fit(x=[cur_x, cur_y],
+                                     y=None,
+                                     epochs=self.epochs,
+                                     batch_size=self.batch_size,
+                                     shuffle=True,
+                                     verbose=self.verbose
+                                     )]
             X_trans = ae_.predict([X[np.where(y == batch_name)],
                                    y[np.where(y == batch_name)]])
             X[np.where(y == batch_name)] = X_trans
