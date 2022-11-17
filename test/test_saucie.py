@@ -3,7 +3,6 @@ import pickle
 
 import numpy as np
 from sklearn.base import clone
-# import tensorflow as tf
 from sklearn.datasets import make_blobs
 
 from saucie.wrappers import SAUCIE_batches, SAUCIE_labels
@@ -42,36 +41,99 @@ def test_SAUCIE_batches_preserves_data_shape():
     assert cleaned.shape == (10000, 20)
 
 
-# def test_SAUCIE_batches_yields_stable_results_batches_order():
-#     assert 0 == 1
-
-
 def test_SAUCIE_labels_data():
     data = data_saucie()
-    saucie = SAUCIE_labels(epochs=8, lr=1e-6, normalize=True,
+    saucie = SAUCIE_labels(epochs=2, lr=1e-6, normalize=True,
                            random_state=42)
     saucie.fit(data)
     labels = saucie.predict(data)
     assert labels.shape == (10000, )
 
 
-# def test_SAUCIE_batches_preserves_ref_batch():
-#     assert 0 == 1
-
-# def test_SAUCIE_yields_stable_results_without_training():
-#     assert 0 == 1
-
-
-# def test_SAUCIE_yields_stable_results_with_training():
-#     assert 0 == 1
-
-
-# def test_SAUCIE_batches_yields_stable_results_without_training():
-#     assert 0 == 1
+def test_SAUCIE_batches_preserves_ref_batch():
+    data = data_saucie()
+    batches = data_batches()
+    saucie = SAUCIE_batches(epochs=2, lr=1e-9, normalize=False,
+                            random_state=42)
+    saucie.fit(data, batches)
+    cleaned = saucie.transform(data, batches)
+    ref_batch = np.where(batches == 0)
+    print(ref_batch)
+    np.testing.assert_array_equal(data[ref_batch], cleaned[ref_batch])
 
 
-# def test_SAUCIE_batches_yields_stable_results_with_training():
-#     assert 0 == 1
+def test_SAUCIE_yields_stable_results_without_training():
+    data = data_saucie()
+    saucie = SAUCIE_labels(epochs=0, lr=1e-6, normalize=True, random_state=42)
+    saucie.fit(data)
+    labels1 = saucie.predict(data)
+    encoded1 = saucie.transform(data)
+
+    saucie1 = SAUCIE_labels(epochs=0, lr=1e-6, normalize=True, random_state=42)
+    saucie1.fit(data)
+    labels2 = saucie1.predict(data)
+    encoded2 = saucie1.transform(data)
+    np.testing.assert_array_equal(labels1, labels2)
+    np.testing.assert_array_equal(encoded1, encoded2)
+
+
+def test_SAUCIE_yields_stable_results_with_training():
+    data = data_saucie()
+    saucie = SAUCIE_labels(epochs=2, lr=1e-6, normalize=True, random_state=42)
+    saucie.fit(data)
+    labels1 = saucie.predict(data)
+    encoded1 = saucie.transform(data)
+
+    saucie1 = SAUCIE_labels(epochs=2, lr=1e-6, normalize=True, random_state=42)
+    saucie1.fit(data)
+    labels2 = saucie1.predict(data)
+    encoded2 = saucie1.transform(data)
+    np.testing.assert_array_equal(labels1, labels2)
+    np.testing.assert_array_equal(encoded1, encoded2)
+
+
+def test_SAUCIE_batches_yields_stable_results_without_training():
+    data = data_saucie()
+    batches = data_batches()
+    saucie = SAUCIE_batches(epochs=0, lr=1e-9, normalize=True, random_state=42)
+    saucie.fit(data, batches)
+    cleaned1 = saucie.transform(data, batches)
+
+    saucie1 = SAUCIE_batches(epochs=0, lr=1e-9,
+                             normalize=True, random_state=42)
+    saucie1.fit(data, batches)
+    cleaned2 = saucie1.transform(data, batches)
+
+    np.testing.assert_array_equal(cleaned1, cleaned2)
+
+
+def test_SAUCIE_batches_yields_stable_results_with_training():
+    data = data_saucie()
+    batches = data_batches()
+    saucie = SAUCIE_batches(epochs=2, lr=1e-9, normalize=True, random_state=42)
+    saucie.fit(data, batches)
+    cleaned1 = saucie.transform(data, batches)
+
+    saucie1 = SAUCIE_batches(epochs=2, lr=1e-9,
+                             normalize=True, random_state=42)
+    saucie1.fit(data, batches)
+    cleaned2 = saucie1.transform(data, batches)
+
+    np.testing.assert_array_equal(cleaned1, cleaned2)
+
+
+def test_SAUCIE_batches_yields_stable_results_batches_order():
+    data = data_saucie()
+    batches = data_batches()
+    saucie = SAUCIE_batches(epochs=2, lr=1e-9, normalize=True, random_state=42)
+    saucie.fit(data, batches)
+    cleaned1 = saucie.transform(data, batches)
+
+    batches[batches == 1] = 3
+    # batches 2 is now before batches 1
+    cleaned2 = saucie.transform(data, batches)
+
+    np.testing.assert_array_equal(cleaned1, cleaned2)
 
 
 def test_SAUCIE_is_clonable():
