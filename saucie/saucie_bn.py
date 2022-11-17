@@ -3,8 +3,8 @@ from tensorflow.keras.initializers import GlorotUniform
 from tensorflow.keras.layers import Dense, Input, LeakyReLU
 from tensorflow.keras.models import Model
 from tensorflow.keras.optimizers import Adam
-from tensorflow.random import set_seed
 from tensorflow.nn import moments
+from tensorflow.random import set_seed
 
 # from utils import calculate_mmd
 
