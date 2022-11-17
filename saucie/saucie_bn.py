@@ -6,8 +6,6 @@ from tensorflow.keras.optimizers import Adam
 from tensorflow.nn import moments
 from tensorflow.random import set_seed
 
-# from utils import calculate_mmd
-
 
 class SAUCIE_BN(object):
     def __init__(self,
@@ -119,7 +117,7 @@ class SAUCIE_BN(object):
             intracluster_loss = self._build_reg_d(inputs, layer_c)
             SAUCIE_BN_model.add_loss(intracluster_loss)
             SAUCIE_BN_model.add_metric(intracluster_loss, name='intra_loss',
-                                       aggregation='mean')      
+                                       aggregation='mean')
 
         return SAUCIE_BN_model, encoder, classifier
 
