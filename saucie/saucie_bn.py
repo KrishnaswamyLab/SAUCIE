@@ -61,8 +61,6 @@ class SAUCIE_BN(object):
         encoder = Model(inputs, embedded, name='encoder')
 
         # DECODER
-        # latent_inputs = Input(shape=(self.layers[3], ),
-        #                       name='latentspace')
         h5 = Dense(self.layers[2],
                    kernel_initializer=GlorotUniform(seed=self.seed),
                    name='decoder0', use_bias=True)(embedded)
