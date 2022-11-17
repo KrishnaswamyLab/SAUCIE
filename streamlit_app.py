@@ -93,7 +93,7 @@ if __name__ == "__main__":
                     cleaned_data = data
 
             # fit on the cleaned data -> labels, embed
-            saucie = SAUCIE_labels(epochs=50, lr=1e-5, normalize=False,
+            saucie = SAUCIE_labels(epochs=50, lr=1e-4, normalize=False,
                                    batch_size=256, shuffle=True)
             saucie.fit(cleaned_data)
             encoded = saucie.transform(cleaned_data)
@@ -102,9 +102,7 @@ if __name__ == "__main__":
                                  labels, ground_truth)
 
             st.plotly_chart(fig, use_container_width=True)
-            vis = np.append(x.reshape(x.shape[0], -1),
-                            y.reshape(y.shape[0], -1), axis=-1)
-            # cleaned data or original, embedding, labels, ground truth
-            # display_scores(cleaned_data, vis, random_sp, ground_truth)
+
+            display_scores(cleaned_data, encoded, labels, ground_truth)
             # labels, embedding, model, cleaned data, model for batches
             display_buttons(csv, csv, csv, cleaned_data, model_batches)
