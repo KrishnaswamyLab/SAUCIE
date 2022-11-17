@@ -20,7 +20,8 @@ def data_saucie():
 
 
 def data_batches():
-    data = np.random.randint(0, 3, 10000)
+    rng = np.random.default_rng(42)
+    data = rng.integers(0, 3, 10000)
     return data
 
 
